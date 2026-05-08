@@ -135,6 +135,27 @@
   .goal .right{margin-left:auto;text-align:right;color:var(--green-d);font-weight:700}
   .goal .right .l{font-size:11px;letter-spacing:1.2px;font-weight:700}
   .goal .right .s{font-size:12px;color:var(--gray-500);font-weight:500}
+
+  /* Sub-tabs (within Production view) */
+  .subtabs{display:flex;gap:4px;margin-bottom:14px;border-bottom:1px solid var(--gray-100)}
+  .subtab{padding:8px 14px;font-weight:600;font-size:13px;color:var(--gray-500);cursor:pointer;background:none;border:none;border-bottom:3px solid transparent}
+  .subtab.active{color:var(--green-d);border-bottom-color:var(--green)}
+
+  /* Gantt */
+  .gantt-wrap{position:relative;width:100%;overflow-x:auto;background:#fafbfb;border:1px solid var(--gray-100);border-radius:6px}
+  .gantt-svg{display:block;font-family:inherit}
+  .gantt-svg .lane{fill:#fff}
+  .gantt-svg .lane-alt{fill:#f3f5f4}
+  .gantt-svg .lane-label{font-size:12px;font-weight:700;fill:var(--gray-700)}
+  .gantt-svg .axis-label{font-size:10px;fill:var(--gray-500)}
+  .gantt-svg .axis-tick{stroke:#e0e3e1;stroke-width:1}
+  .gantt-svg rect.bar{cursor:pointer;stroke:rgba(0,0,0,.18);stroke-width:.5}
+  .gantt-svg rect.bar:hover{stroke:#000;stroke-width:1.5}
+  .gantt-tooltip{position:absolute;pointer-events:none;background:rgba(20,30,25,.95);color:#fff;padding:8px 10px;border-radius:6px;font-size:12px;line-height:1.5;display:none;z-index:10;max-width:340px}
+  .gantt-tooltip b{color:#fff}
+  .gantt-controls{display:flex;gap:8px;align-items:center;margin-bottom:10px;flex-wrap:wrap;font-size:13px}
+  .gantt-controls .label{color:var(--gray-500);font-size:11px;letter-spacing:1px;font-weight:700;text-transform:uppercase}
+  .gantt-controls input[type=date]{font:inherit;padding:5px 8px;border:1px solid var(--gray-200);border-radius:6px}
 </style>
 </head>
 <body>
@@ -156,7 +177,9 @@
   <div class="actions">
     <label class="btn primary">Upload Inventory<input type="file" id="fileInv" accept=".xlsx,.xls,.csv" /></label>
     <label class="btn primary">Upload Shipments<input type="file" id="fileShip" accept=".xlsx,.xls,.csv" /></label>
-    <label class="btn primary">Upload Production<input type="file" id="fileProd" accept=".xlsx,.xls,.csv" /></label>
+    <label class="btn primary">Upload Mill 1<input type="file" id="fileMill1" accept=".xlsx,.xls,.csv" /></label>
+    <label class="btn primary">Upload Mill 2<input type="file" id="fileMill2" accept=".xlsx,.xls,.csv" /></label>
+    <label class="btn primary">Upload Forecast<input type="file" id="fileProd" accept=".xlsx,.xls,.csv" /></label>
     <button class="btn" id="btnExport">Export CSV</button>
     <button class="btn" id="btnBackup">↓ Backup</button>
     <label class="btn">↑ Restore<input type="file" id="fileRestore" accept=".json" /></label>
@@ -238,34 +261,91 @@
 
 <!-- ============ PRODUCTION ============ -->
 <section class="view" id="view-prod">
-  <div id="prodEmpty" class="empty">
-    <h2>No production data loaded yet</h2>
-    <p>Upload the NSTX History &amp; Forecast export (rolling weekly forecast by product family) or any production-runs file.</p>
-    <p style="font-size:12px">NSTX columns expected: <b>Product Family, Time / Series, Final Sales History, Final Production Forecast, Booked Sales Orders, Week</b>.</p>
+  <div class="subtabs" id="prodSubtabs">
+    <button class="subtab active" data-sub="runs">Mill Runs (Gantt)</button>
+    <button class="subtab" data-sub="fc">Sales Forecast</button>
   </div>
-  <div id="prodContent" style="display:none">
-    <div class="kpis" id="prodKpis"></div>
-    <div class="card">
-      <div class="head">Weekly Sales History &amp; Production Forecast — Tons<span class="right" id="prodChartToggle">
-        <button class="chip active" data-prng="all">All</button>
-        <button class="chip" data-prng="hist">History</button>
-        <button class="chip" data-prng="fc">Forecast</button>
-      </span></div>
-      <div class="body"><div class="chart-wrap tall"><canvas id="chartProd"></canvas></div></div>
+
+  <!-- ===== Mill Runs sub-view ===== -->
+  <div id="prodSub-runs">
+    <div id="runsEmpty" class="empty">
+      <h2>No mill production data loaded yet</h2>
+      <p>Upload Mill 1 or Mill 2 bundle-level production CSVs.</p>
+      <p style="font-size:12px">Expected columns: <b>prd_product_id, blg_grade_id, bdt_cut_length, bdt_disposition, bdt_bundle_date, bundle_tons, bdt_heat_no, crw_crew_id</b></p>
     </div>
-    <div class="split">
+    <div id="runsContent" style="display:none">
+      <div class="kpis" id="runsKpis"></div>
       <div class="card">
-        <div class="head">Forecast Mix by Product</div>
-        <div class="body"><div class="chart-wrap" style="height:300px"><canvas id="chartProdMix"></canvas></div></div>
+        <div class="head">Rolling Schedule — Gantt by Mill<span class="right" id="ganttRange"></span></div>
+        <div class="body">
+          <div class="gantt-controls">
+            <span class="label">Window:</span>
+            <button class="chip" data-gw="7">Last 7d</button>
+            <button class="chip active" data-gw="30">Last 30d</button>
+            <button class="chip" data-gw="90">Last 90d</button>
+            <button class="chip" data-gw="all">All</button>
+            <span class="label" style="margin-left:14px">Min span:</span>
+            <button class="chip active" data-gmin="0">All</button>
+            <button class="chip" data-gmin="1">≥1h</button>
+            <button class="chip" data-gmin="4">≥4h</button>
+            <span class="spacer" style="flex:1"></span>
+            <span class="summary" id="ganttSummary"></span>
+          </div>
+          <div class="gantt-wrap" id="ganttWrap">
+            <svg class="gantt-svg" id="ganttSvg"></svg>
+            <div class="gantt-tooltip" id="ganttTip"></div>
+          </div>
+          <div class="sub" style="font-size:12px;color:var(--gray-500);margin-top:8px">A rolling = consecutive bundles in the same mill sharing Product ID, Grade, Length, and Disposition. Bar width = first bundle → last bundle (span). Click any bar to filter the rolling table below.</div>
+        </div>
       </div>
       <div class="card">
-        <div class="head">Top Product Families</div>
-        <div class="body" style="max-height:380px;overflow:auto"><table id="tblProdItems"></table></div>
+        <div class="head">Rolling Summary<span class="right" id="rollingFilter"></span></div>
+        <div class="body" style="max-height:520px;overflow:auto"><table id="tblRollings"></table></div>
+      </div>
+      <div class="split">
+        <div class="card">
+          <div class="head">Mill Output by Product (Tons)</div>
+          <div class="body"><div class="chart-wrap" style="height:320px"><canvas id="chartMillMix"></canvas></div></div>
+        </div>
+        <div class="card">
+          <div class="head">Daily Output — Mill 1 vs Mill 2</div>
+          <div class="body"><div class="chart-wrap" style="height:320px"><canvas id="chartMillDay"></canvas></div></div>
+        </div>
       </div>
     </div>
-    <div class="card">
-      <div class="head">Rolling Weekly Production Forecast (next 12 weeks)<span class="right">By product family · tons</span></div>
-      <div class="body" style="overflow:auto"><table id="tblRolling"></table></div>
+  </div>
+
+  <!-- ===== Forecast sub-view ===== -->
+  <div id="prodSub-fc" style="display:none">
+    <div id="prodEmpty" class="empty">
+      <h2>No forecast data loaded yet</h2>
+      <p>Upload the NSTX History &amp; Forecast export (rolling weekly forecast by product family).</p>
+      <p style="font-size:12px">Columns expected: <b>Product Family, Time / Series, Final Sales History, Final Production Forecast, Booked Sales Orders, Week, Production Cycle</b>.</p>
+    </div>
+    <div id="prodContent" style="display:none">
+      <div class="kpis" id="prodKpis"></div>
+      <div class="card">
+        <div class="head">Weekly Sales History &amp; Production Forecast — Tons<span class="right" id="prodChartToggle">
+          <button class="chip active" data-prng="all">All</button>
+          <button class="chip" data-prng="hist">History</button>
+          <button class="chip" data-prng="fc">Forecast</button>
+        </span></div>
+        <div class="body"><div class="chart-wrap tall"><canvas id="chartProd"></canvas></div></div>
+      </div>
+      <div class="split">
+        <div class="card">
+          <div class="head">Forecast Mix by Product</div>
+          <div class="body"><div class="chart-wrap" style="height:300px"><canvas id="chartProdMix"></canvas></div></div>
+        </div>
+        <div class="card">
+          <div class="head">Top Product Families</div>
+          <div class="body" style="max-height:380px;overflow:auto"><table id="tblProdItems"></table></div>
+        </div>
+      </div>
+      <div class="card">
+        <div class="head">Rolling Weekly Production Forecast (next 12 weeks)<span class="right">By product family · tons · ★ = active rolling cycle</span></div>
+        <div class="body" style="overflow:auto"><table id="tblRolling"></table></div>
+      </div>
     </div>
   </div>
 </section>
@@ -314,10 +394,22 @@
  * State + persistence
  * ===================================================================*/
 const LS_KEY = 'pcd_state_v1';
-const STATE = { inventory: [], shipments: [], production: [], filters: { product: 'ALL', bay: 'ALL', includeHold: true, shipRange: 'day' }, asOf: null };
+const STATE = {
+  inventory: [],
+  shipments: [],
+  production: [],
+  // Mill bundle data lives in memory only (too big for localStorage); rollings persist.
+  millBundles: { '1': [], '2': [] },
+  rollings:    { '1': [], '2': [] },
+  filters: { product: 'ALL', bay: 'ALL', includeHold: true, shipRange: 'day', prodSub: 'runs', ganttWindow: '30', ganttMin: 0, rollingMillFilter: null, rollingKeyFilter: null },
+  asOf: null
+};
 
 function saveState(){
-  try{ localStorage.setItem(LS_KEY, JSON.stringify(STATE)); }
+  // Don't persist raw bundles — they can be 100k+ rows (way over localStorage quota).
+  // Rollings (the compact summaries) do persist.
+  const toSave = { ...STATE, millBundles: { '1': [], '2': [] } };
+  try{ localStorage.setItem(LS_KEY, JSON.stringify(toSave)); }
   catch(e){ banner('Could not save to localStorage (data may be too large): '+e.message,'warn'); }
 }
 function loadState(){
@@ -329,6 +421,9 @@ function loadState(){
     STATE.inventory = (s.inventory||[]).map(r => ({...r, originDate: r.originDate?new Date(r.originDate):null}));
     STATE.shipments = (s.shipments||[]).map(r => ({...r, date: r.date?new Date(r.date):null}));
     STATE.production = (s.production||[]).map(r => ({...r, date: r.date?new Date(r.date):null}));
+    STATE.millBundles = { '1': [], '2': [] };
+    const reviveRoll = arr => (arr||[]).map(r => ({...r, start: r.start?new Date(r.start):null, end: r.end?new Date(r.end):null}));
+    STATE.rollings = { '1': reviveRoll(s.rollings && s.rollings['1']), '2': reviveRoll(s.rollings && s.rollings['2']) };
     return true;
   }catch(e){ console.warn(e); return false; }
 }
@@ -370,6 +465,18 @@ function classifyFamily(family){
   if(f.startsWith('RD')) return 'EB-SBQ';
   if(f.startsWith('CH') || f.startsWith('EA') || f.startsWith('UA') ||
      f.startsWith('FL') || f.startsWith('SPECIAL')) return 'HR-MBQ';
+  return 'OTHER';
+}
+/* Mill-run product IDs use a "1XX size" pattern: 1RD = round, 1FL = flat,
+   1EA/1UA = angle, 1CH = channel, 1RES = rebar, 1BI = billet. */
+function classifyProductId(pid){
+  if(!pid) return 'OTHER';
+  const p = String(pid).toUpperCase().replace(/^[12]/,'').trim();
+  if(p.startsWith('REBAR') || p.startsWith('RES')) return 'REBAR';
+  if(p.startsWith('BI ') || p.startsWith('BILLET')) return 'BILLETS';
+  if(p.startsWith('RD ') || p.startsWith('RND')) return 'EB-SBQ';
+  if(p.startsWith('CH') || p.startsWith('EA') || p.startsWith('UA') ||
+     p.startsWith('FL') || p.startsWith('SQ')) return 'HR-MBQ';
   return 'OTHER';
 }
 const PRODUCT_COLORS = { REBAR:'#006b3f', 'HR-MBQ':'#d68910', 'EB-SBQ':'#7d3c98', BILLETS:'#2874a6', OTHER:'#7f8c8d' };
@@ -636,6 +743,117 @@ function parseNSTXForecast(rows){
 }
 
 /* =====================================================================
+ * Mill production runs (bundle-level CSV)
+ * ===================================================================*/
+function readTextFile(file){
+  return new Promise((res,rej)=>{
+    const r = new FileReader();
+    r.onload = e => res(e.target.result);
+    r.onerror = () => rej(r.error);
+    r.readAsText(file);
+  });
+}
+function parseCsvLine(line){
+  const out = [];
+  let cur = '', q = false;
+  for(let i=0;i<line.length;i++){
+    const c = line[i];
+    if(c === '"'){
+      if(q && line[i+1] === '"'){ cur += '"'; i++; continue; }
+      q = !q; continue;
+    }
+    if(c === ',' && !q){ out.push(cur); cur = ''; continue; }
+    cur += c;
+  }
+  out.push(cur);
+  return out;
+}
+function parseCsvText(text){
+  if(text.charCodeAt(0) === 0xFEFF) text = text.slice(1);
+  const lines = text.split(/\r?\n/);
+  while(lines.length && !lines[lines.length-1].length) lines.pop();
+  if(!lines.length) return [];
+  const headers = parseCsvLine(lines[0]).map(h => h.trim());
+  const out = [];
+  for(let i=1;i<lines.length;i++){
+    if(!lines[i].length) continue;
+    const cells = parseCsvLine(lines[i]);
+    const obj = {};
+    for(let j=0;j<headers.length;j++) obj[headers[j]] = cells[j];
+    out.push(obj);
+  }
+  return out;
+}
+
+/* Bundle-level mill production parser. Each row in the CSV is one bundle. */
+function parseMillRuns(rows, mill){
+  const out = [];
+  for(const r of rows){
+    const dt = r['bdt_bundle_date'] || r['Bundle Date'] || r['date'];
+    if(!dt) continue;
+    const date = new Date(dt);
+    if(isNaN(date)) continue;
+    const tons = Number(r['bundle_tons'] || r['Bundle Tons'] || r['tons']) || 0;
+    const productId = String(r['prd_product_id'] || r['Product ID'] || r['product_id'] || '').trim();
+    const grade = String(r['blg_grade_id'] || r['Grade'] || r['grade'] || '').trim();
+    const length = Number(r['bdt_cut_length'] || r['Cut Length'] || r['cut_length']) || 0;
+    const disposition = String(r['bdt_disposition'] || r['Disposition'] || r['disposition'] || '').trim();
+    const heat = String(r['bdt_heat_no'] || r['Heat'] || r['heat'] || '').trim();
+    const crew = String(r['crw_crew_id'] || r['Crew'] || r['crew'] || '').trim();
+    const pieces = Number(r['bdt_piece_count'] || r['Pieces'] || r['pieces']) || 0;
+    out.push({
+      mill, date, tons, productId, grade, length, disposition, heat, crew, pieces,
+      tagNo: String(r['bdt_tag_no']||'').trim(),
+      product: classifyProductId(productId)
+    });
+  }
+  return out;
+}
+
+/* Walk bundles in chronological order; a "rolling" is a contiguous block
+   sharing (productId, grade, length, disposition). The moment any of those
+   four changes, the current rolling closes and a new one opens. */
+function computeRollings(bundles){
+  if(!bundles || !bundles.length) return [];
+  const sorted = [...bundles].sort((a,b) => a.date - b.date);
+  const out = [];
+  let cur = null;
+  for(const b of sorted){
+    const key = b.productId+'|'+b.grade+'|'+b.length+'|'+b.disposition;
+    if(cur && cur.key === key){
+      cur.bundles++;
+      cur.tons += b.tons;
+      cur.pieces += b.pieces;
+      if(b.date > cur.end) cur.end = b.date;
+      cur._heats.add(b.heat);
+      cur._crews.add(b.crew);
+    } else {
+      if(cur){
+        cur.heats = cur._heats.size; delete cur._heats;
+        cur.crews = Array.from(cur._crews).filter(Boolean).join(','); delete cur._crews;
+        cur.hours = (cur.end - cur.start)/3600000;
+        out.push(cur);
+      }
+      cur = {
+        mill: b.mill, key,
+        productId: b.productId, product: b.product,
+        grade: b.grade, length: b.length, disposition: b.disposition,
+        start: new Date(b.date), end: new Date(b.date),
+        bundles: 1, tons: b.tons, pieces: b.pieces,
+        _heats: new Set([b.heat]), _crews: new Set([b.crew])
+      };
+    }
+  }
+  if(cur){
+    cur.heats = cur._heats.size; delete cur._heats;
+    cur.crews = Array.from(cur._crews).filter(Boolean).join(','); delete cur._crews;
+    cur.hours = (cur.end - cur.start)/3600000;
+    out.push(cur);
+  }
+  return out;
+}
+
+/* =====================================================================
  * Filtering
  * ===================================================================*/
 function applyInvFilters(){
@@ -650,6 +868,14 @@ function applyInvFilters(){
 function applyShipFilters(){
   const { product } = STATE.filters;
   return STATE.shipments.filter(r => {
+    if(product !== 'ALL' && r.product !== product) return false;
+    return true;
+  });
+}
+function applyRollings(){
+  const { product } = STATE.filters;
+  const all = [].concat(STATE.rollings['1']||[], STATE.rollings['2']||[]);
+  return all.filter(r => {
     if(product !== 'ALL' && r.product !== product) return false;
     return true;
   });
@@ -913,6 +1139,218 @@ function renderShipping(){
 /* =====================================================================
  * Render: Production
  * ===================================================================*/
+/* =====================================================================
+ * Render: Mill Runs (Gantt) sub-view
+ * ===================================================================*/
+function renderMillRuns(){
+  const rolls = applyRollings();
+  const empty = !rolls.length;
+  document.getElementById('runsEmpty').style.display = empty ? 'block' : 'none';
+  document.getElementById('runsContent').style.display = empty ? 'none' : 'block';
+  if(empty) return;
+
+  // Apply gantt window filter (for Gantt chart only — table shows the same window)
+  const wnd = STATE.filters.ganttWindow || '30';
+  const minSpan = Number(STATE.filters.ganttMin || 0);
+  const maxEnd = Math.max(...rolls.map(r=>r.end.getTime()));
+  let cutoff = -Infinity;
+  if(wnd !== 'all'){
+    const days = Number(wnd);
+    cutoff = maxEnd - days*86400000;
+  }
+  let visible = rolls.filter(r => r.end.getTime() >= cutoff);
+  if(minSpan > 0) visible = visible.filter(r => r.hours >= minSpan);
+
+  // KPIs over the visible window
+  const totalTons = visible.reduce((a,r)=>a+r.tons,0);
+  const totalHours = visible.reduce((a,r)=>a+r.hours,0);
+  const m1 = visible.filter(r=>r.mill==='1');
+  const m2 = visible.filter(r=>r.mill==='2');
+  const tonsPerHr = totalHours ? totalTons/totalHours : 0;
+  const dates = visible.map(r=>r.start.getTime()).concat(visible.map(r=>r.end.getTime()));
+  const minD = dates.length?new Date(Math.min(...dates)):null;
+  const maxD = dates.length?new Date(Math.max(...dates)):null;
+  document.getElementById('runsKpis').innerHTML = `
+    <div class="kpi green"><h3>Rollings</h3><div class="val">${fmt0(visible.length)}</div><div class="sub">Mill 1: ${fmt0(m1.length)} · Mill 2: ${fmt0(m2.length)}</div></div>
+    <div class="kpi green"><h3>Total Tons</h3><div class="val">${fmt0(totalTons)}<small>tons</small></div><div class="sub">Mill 1: ${fmt0(m1.reduce((a,r)=>a+r.tons,0))} · Mill 2: ${fmt0(m2.reduce((a,r)=>a+r.tons,0))}</div></div>
+    <div class="kpi green"><h3>Rolling Hours</h3><div class="val">${fmt0(totalHours)}<small>hrs</small></div><div class="sub">span first start → last end</div></div>
+    <div class="kpi blue"><h3>Tons / Hour</h3><div class="val">${fmt1(tonsPerHr)}</div><div class="sub">overall throughput</div></div>
+    <div class="kpi green"><h3>Date Range</h3><div class="val" style="font-size:18px">${minD?dstr(minD):'—'}</div><div class="sub">→ ${maxD?dstr(maxD):'—'}</div></div>
+  `;
+
+  document.getElementById('ganttRange').textContent = visible.length ? `${dstr(minD)} → ${dstr(maxD)} · ${fmt0(visible.length)} rollings` : '';
+  document.getElementById('ganttSummary').innerHTML = `<b>${fmt0(visible.length)}</b> rollings · <b>${fmt0(totalTons)}</b> tons · <b>${fmt0(totalHours)}</b> hrs`;
+
+  renderGantt(visible, minD, maxD);
+
+  // Rolling summary table — apply optional click-filter from Gantt
+  let tableRows = visible;
+  if(STATE.filters.rollingKeyFilter){
+    tableRows = visible.filter(r => r.key === STATE.filters.rollingKeyFilter);
+  }
+  if(STATE.filters.rollingMillFilter){
+    tableRows = tableRows.filter(r => r.mill === STATE.filters.rollingMillFilter);
+  }
+  // Sort by start desc
+  tableRows = tableRows.slice().sort((a,b) => b.start - a.start);
+  const flt = STATE.filters.rollingKeyFilter
+    ? `<button class="chip active">Filtered to selected rolling — click bar again to clear</button>`
+    : '';
+  document.getElementById('rollingFilter').innerHTML = flt;
+
+  document.getElementById('tblRollings').innerHTML = `
+    <thead><tr>
+      <th>Mill</th><th>Product ID</th><th>Grade</th><th class="num">Length (mm)</th><th>Disp.</th>
+      <th>Start</th><th>End</th><th class="num">Span (hrs)</th>
+      <th class="num">Bundles</th><th class="num">Tons</th><th class="num">Heats</th><th>Crew(s)</th>
+    </tr></thead>
+    <tbody>${tableRows.slice(0,500).map(r=>`<tr>
+      <td>Mill ${r.mill}</td>
+      <td><span style="display:inline-block;width:8px;height:8px;background:${PRODUCT_COLORS[r.product]||'#7f8c8d'};border-radius:2px;margin-right:6px"></span>${esc(r.productId)}</td>
+      <td>${esc(r.grade)}</td>
+      <td class="num">${fmt0(r.length)}</td>
+      <td>${esc(r.disposition)}</td>
+      <td>${r.start.toISOString().slice(0,16).replace('T',' ')}</td>
+      <td>${r.end.toISOString().slice(0,16).replace('T',' ')}</td>
+      <td class="num">${fmt1(r.hours)}</td>
+      <td class="num">${fmt0(r.bundles)}</td>
+      <td class="num">${fmt1(r.tons)}</td>
+      <td class="num">${fmt0(r.heats)}</td>
+      <td>${esc(r.crews)}</td>
+    </tr>`).join('')}</tbody>
+  `;
+  if(tableRows.length > 500){
+    document.getElementById('tblRollings').insertAdjacentHTML('beforeend',
+      `<tfoot><tr><td colspan="12" style="color:var(--gray-500);text-align:center;padding:10px">Showing first 500 of ${fmt0(tableRows.length)} rollings — narrow the window or click a Gantt bar to drill in.</td></tr></tfoot>`);
+  }
+
+  // Mix donut: tons by product (visible window)
+  const mix = {};
+  for(const r of visible) mix[r.product] = (mix[r.product]||0) + r.tons;
+  const mLabels = Object.keys(mix);
+  makeChart('chartMillMix', {
+    type:'doughnut',
+    data:{ labels:mLabels.map(p=>PRODUCT_LABEL[p]||p), datasets:[{data:mLabels.map(p=>Math.round(mix[p])), backgroundColor:mLabels.map(p=>PRODUCT_COLORS[p]||'#7f8c8d')}]},
+    options:{ responsive:true, maintainAspectRatio:false, plugins:{legend:{position:'bottom'}} }
+  });
+
+  // Daily mill output
+  const byDay = {};
+  for(const r of visible){
+    // distribute rolling tons evenly across the days it spanned
+    const startDay = new Date(r.start); startDay.setHours(0,0,0,0);
+    const endDay = new Date(r.end); endDay.setHours(0,0,0,0);
+    const days = Math.max(1, daysBetween(endDay, startDay) + 1);
+    const per = r.tons / days;
+    for(let i=0;i<days;i++){
+      const d = new Date(startDay.getTime() + i*86400000);
+      const k = dstr(d);
+      byDay[k] = byDay[k] || { '1':0, '2':0 };
+      byDay[k][r.mill] += per;
+    }
+  }
+  const dayLabels = Object.keys(byDay).sort();
+  makeChart('chartMillDay', {
+    type:'bar',
+    data:{ labels: dayLabels, datasets:[
+      { label:'Mill 1', data: dayLabels.map(k=>Math.round(byDay[k]['1']||0)), backgroundColor: PRODUCT_COLORS.REBAR },
+      { label:'Mill 2', data: dayLabels.map(k=>Math.round(byDay[k]['2']||0)), backgroundColor: PRODUCT_COLORS['EB-SBQ'] }
+    ]},
+    options:{ responsive:true, maintainAspectRatio:false, plugins:{legend:{position:'bottom'}}, scales:{x:{stacked:true},y:{stacked:true,title:{display:true,text:'Tons'}}} }
+  });
+}
+
+function renderGantt(rollings, minD, maxD){
+  const wrap = document.getElementById('ganttWrap');
+  const svg = document.getElementById('ganttSvg');
+  const tip = document.getElementById('ganttTip');
+  if(!rollings.length || !minD || !maxD){
+    svg.innerHTML = ''; svg.setAttribute('width','100%'); svg.setAttribute('height','60');
+    return;
+  }
+  const W = Math.max(800, wrap.clientWidth - 24);
+  const PAD_L = 70, PAD_R = 16, PAD_T = 12, PAD_B = 28;
+  const LANE_H = 70;
+  const lanes = ['1','2'];
+  const H = PAD_T + lanes.length * LANE_H + PAD_B;
+  const innerW = W - PAD_L - PAD_R;
+  const span = Math.max(1, maxD - minD);
+  const xOf = d => PAD_L + ((d - minD) / span) * innerW;
+  const laneY = m => PAD_T + lanes.indexOf(m) * LANE_H;
+  const tickFmt = (date) => {
+    const d = new Date(date);
+    return d.toISOString().slice(0,10);
+  };
+  // Build axis ticks (day or week granularity depending on span)
+  const days = (maxD - minD) / 86400000;
+  let stepDays = 1;
+  if(days > 240) stepDays = 30;
+  else if(days > 60) stepDays = 7;
+  else if(days > 30) stepDays = 3;
+  const ticks = [];
+  const t0 = new Date(minD); t0.setHours(0,0,0,0);
+  for(let t = t0.getTime(); t <= maxD; t += stepDays*86400000){
+    ticks.push(t);
+  }
+
+  let html = '';
+  // Lane backgrounds + labels
+  for(let i=0;i<lanes.length;i++){
+    const m = lanes[i];
+    html += `<rect class="${i%2===0?'lane':'lane-alt'}" x="${PAD_L}" y="${laneY(m)}" width="${innerW}" height="${LANE_H}" />`;
+    html += `<text class="lane-label" x="${PAD_L-10}" y="${laneY(m)+LANE_H/2+5}" text-anchor="end">MILL ${m}</text>`;
+  }
+  // Vertical grid + axis
+  for(const t of ticks){
+    const x = xOf(t);
+    html += `<line class="axis-tick" x1="${x}" y1="${PAD_T}" x2="${x}" y2="${H-PAD_B}" />`;
+    html += `<text class="axis-label" x="${x}" y="${H-PAD_B+14}" text-anchor="middle">${tickFmt(t)}</text>`;
+  }
+  // Bars
+  for(const r of rollings){
+    const x1 = xOf(r.start.getTime());
+    const x2 = Math.max(x1+1, xOf(r.end.getTime()));
+    const w = x2 - x1;
+    const y = laneY(r.mill) + 8;
+    const h = LANE_H - 16;
+    const fill = PRODUCT_COLORS[r.product] || '#7f8c8d';
+    const sel = STATE.filters.rollingKeyFilter === r.key ? ';stroke:#000;stroke-width:2' : '';
+    html += `<rect class="bar" x="${x1}" y="${y}" width="${w}" height="${h}" fill="${fill}" style="opacity:.85${sel}"
+              data-key="${esc(r.key)}" data-mill="${r.mill}"
+              data-pid="${esc(r.productId)}" data-grade="${esc(r.grade)}" data-len="${r.length}" data-disp="${esc(r.disposition)}"
+              data-start="${r.start.toISOString()}" data-end="${r.end.toISOString()}"
+              data-tons="${r.tons.toFixed(2)}" data-hours="${r.hours.toFixed(1)}" data-bundles="${r.bundles}" data-heats="${r.heats}"
+            />`;
+  }
+  svg.setAttribute('width', W);
+  svg.setAttribute('height', H);
+  svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
+  svg.innerHTML = html;
+
+  // Hover/click handlers
+  svg.querySelectorAll('rect.bar').forEach(rect => {
+    rect.addEventListener('mouseenter', e => {
+      const d = e.target.dataset;
+      tip.innerHTML = `<b>Mill ${d.mill} · ${esc(d.pid)}</b><br>
+        Grade: ${esc(d.grade)}<br>Length: ${fmt0(Number(d.len))} mm<br>Disposition: ${esc(d.disp)}<br>
+        ${d.start.slice(0,16).replace('T',' ')} → ${d.end.slice(0,16).replace('T',' ')}<br>
+        <b>${fmt1(Number(d.tons))} tons</b> · ${fmt1(Number(d.hours))} hrs · ${fmt0(Number(d.bundles))} bundles · ${fmt0(Number(d.heats))} heats`;
+      tip.style.display = 'block';
+    });
+    rect.addEventListener('mousemove', e => {
+      const r = wrap.getBoundingClientRect();
+      tip.style.left = (e.clientX - r.left + 12) + 'px';
+      tip.style.top = (e.clientY - r.top + 12) + 'px';
+    });
+    rect.addEventListener('mouseleave', () => { tip.style.display='none'; });
+    rect.addEventListener('click', () => {
+      const k = rect.dataset.key;
+      STATE.filters.rollingKeyFilter = STATE.filters.rollingKeyFilter === k ? null : k;
+      renderMillRuns();
+    });
+  });
+}
+
 function renderProduction(){
   const prod = applyProdFilters();
   document.getElementById('prodEmpty').style.display = prod.length ? 'none' : 'block';
@@ -932,12 +1370,14 @@ function renderProduction(){
     const fcWeeks = new Set(prod.filter(r=>!r.isHistory && r.prodForecast>0).map(r=>r.date.toISOString().slice(0,10)));
     const avgWeekFc = fcWeeks.size ? fcTons/fcWeeks.size : 0;
     const coverage = fcTons ? Math.round(bookedAll/fcTons*100) : null;
+    const activeFams = new Set(prod.filter(r => String(r.cycle).trim() === '1').map(r=>r.family));
 
     document.getElementById('prodKpis').innerHTML = `
       <div class="kpi green"><h3>Sales History</h3><div class="val">${fmt0(histTons)}<small>tons</small></div><div class="sub">${histWeeks.size} historical weeks</div></div>
       <div class="kpi blue"><h3>Production Forecast</h3><div class="val">${fmt0(fcTons)}<small>tons</small></div><div class="sub">${fcWeeks.size} forward weeks</div></div>
       <div class="kpi green"><h3>Avg Week (Forecast)</h3><div class="val">${fmt0(avgWeekFc)}<small>tons</small></div><div class="sub">across forecast horizon</div></div>
       <div class="kpi amber"><h3>Booked Sales Orders</h3><div class="val">${fmt0(bookedAll)}<small>tons</small></div><div class="sub">${coverage==null?'—':coverage+'% of forecast'}</div></div>
+      <div class="kpi green"><h3>★ Active Rolling</h3><div class="val">${fmt0(activeFams.size)}</div><div class="sub">families with cycle=1 anywhere on horizon</div></div>
       <div class="kpi blue"><h3>Product Families</h3><div class="val">${fmt0(families.size)}</div><div class="sub">in forecast file</div></div>
     `;
 
@@ -990,37 +1430,40 @@ function renderProduction(){
       options:{ responsive:true, maintainAspectRatio:false, plugins:{legend:{position:'bottom'}} }
     });
 
-    // Top families table (forecast tons)
+    // Top families table (forecast tons), with active-rolling flag (cycle=1 anywhere on horizon)
     const famAgg = {};
     for(const r of prod){
-      famAgg[r.family] = famAgg[r.family] || {family:r.family, product:r.product, hist:0, fc:0, booked:0};
+      famAgg[r.family] = famAgg[r.family] || {family:r.family, product:r.product, hist:0, fc:0, booked:0, active:false};
       famAgg[r.family].hist += r.salesHistory;
       famAgg[r.family].fc += r.prodForecast;
       famAgg[r.family].booked += r.bookedSO;
+      if(String(r.cycle).trim() === '1') famAgg[r.family].active = true;
     }
     const topFams = Object.values(famAgg).sort((a,b)=>b.fc-a.fc).slice(0,50);
-    document.getElementById('tblProdItems').innerHTML = `<thead><tr><th>Family</th><th>Product</th><th class="num">History</th><th class="num">Forecast</th><th class="num">Booked SO</th><th class="num">Cov %</th></tr></thead>
+    document.getElementById('tblProdItems').innerHTML = `<thead><tr><th>Family</th><th>Product</th><th>Active</th><th class="num">History</th><th class="num">Forecast</th><th class="num">Booked SO</th><th class="num">Cov %</th></tr></thead>
       <tbody>${topFams.map(r=>{
         const cov = r.fc ? Math.round(r.booked/r.fc*100) : null;
-        return `<tr><td>${esc(r.family)}</td><td>${PRODUCT_LABEL[r.product]||r.product}</td><td class="num">${fmt0(r.hist)}</td><td class="num">${fmt0(r.fc)}</td><td class="num">${fmt0(r.booked)}</td><td class="num">${cov==null?'—':cov+'%'}</td></tr>`;
+        return `<tr><td>${esc(r.family)}</td><td>${PRODUCT_LABEL[r.product]||r.product}</td><td>${r.active?'<span style="color:var(--green-d);font-weight:700">★ rolling</span>':'<span style="color:var(--gray-500)">—</span>'}</td><td class="num">${fmt0(r.hist)}</td><td class="num">${fmt0(r.fc)}</td><td class="num">${fmt0(r.booked)}</td><td class="num">${cov==null?'—':cov+'%'}</td></tr>`;
       }).join('')}</tbody>`;
 
-    // Rolling 12-week forecast table: rows = top families, cols = next 12 forecast weeks
+    // Rolling 12-week forecast table: rows = top families, cols = next 12 forecast weeks; star cells where cycle=1
     const futureWeeks = Array.from(new Set(prod.filter(r=>!r.isHistory && r.prodForecast>0).map(r=>r.date.toISOString().slice(0,10)))).sort().slice(0,12);
     const rollingFams = topFams.slice(0,20);
-    const cellMap = {};
+    const cellMap = {}; const cycleMap = {};
     for(const r of prod){
       if(r.isHistory) continue;
       const k = r.date.toISOString().slice(0,10);
       if(!futureWeeks.includes(k)) continue;
       cellMap[r.family] = cellMap[r.family] || {};
       cellMap[r.family][k] = (cellMap[r.family][k]||0) + r.prodForecast;
+      if(String(r.cycle).trim() === '1'){ cycleMap[r.family] = cycleMap[r.family] || {}; cycleMap[r.family][k] = true; }
     }
     document.getElementById('tblRolling').innerHTML = `<thead><tr><th>Family</th><th>Product</th>${futureWeeks.map(w=>`<th class="num">${w.slice(5)}</th>`).join('')}<th class="num">Total</th></tr></thead>
       <tbody>${rollingFams.map(r=>{
         const cells = futureWeeks.map(w => Math.round((cellMap[r.family]||{})[w]||0));
+        const cycles = futureWeeks.map(w => (cycleMap[r.family]||{})[w]);
         const tot = cells.reduce((a,b)=>a+b,0);
-        return `<tr><td>${esc(r.family)}</td><td>${PRODUCT_LABEL[r.product]||r.product}</td>${cells.map(v=>`<td class="num">${v?fmt0(v):'—'}</td>`).join('')}<td class="num"><b>${fmt0(tot)}</b></td></tr>`;
+        return `<tr><td>${esc(r.family)}</td><td>${PRODUCT_LABEL[r.product]||r.product}</td>${cells.map((v,i)=>`<td class="num">${cycles[i]?'<span style="color:var(--green-d)" title="active rolling">★</span> ':''}${v?fmt0(v):'—'}</td>`).join('')}<td class="num"><b>${fmt0(tot)}</b></td></tr>`;
       }).join('')}</tbody>`;
     return;
   }
@@ -1209,6 +1652,7 @@ function setBay(b){
 
 function renderHeaderMeta(){
   const inv = STATE.inventory; const sh = STATE.shipments; const pr = STATE.production;
+  const r1 = STATE.rollings['1']||[]; const r2 = STATE.rollings['2']||[];
   const parts = [];
   if(inv.length){
     const dates = inv.map(r=>r.originDate).filter(Boolean).sort((a,b)=>b-a);
@@ -1218,12 +1662,17 @@ function renderHeaderMeta(){
     const ds = sh.map(r=>r.date).filter(Boolean).sort((a,b)=>a-b);
     parts.push(`<b>SHIP:</b> ${dstr(ds[0])}–${dstr(ds[ds.length-1])}`);
   }
+  for(const m of ['1','2']){
+    const rs = STATE.rollings[m]||[];
+    if(!rs.length) continue;
+    const ds = rs.map(r=>r.start).concat(rs.map(r=>r.end)).filter(Boolean).sort((a,b)=>a-b);
+    parts.push(`<b>MILL ${m}:</b> ${dstr(ds[0])}–${dstr(ds[ds.length-1])} (${fmt0(rs.length)} rollings)`);
+  }
   if(pr.length){
     const dp = pr.map(r=>r.date).filter(Boolean).sort((a,b)=>a-b);
-    parts.push(`<b>PROD:</b> ${dstr(dp[0])}–${dstr(dp[dp.length-1])}`);
+    parts.push(`<b>FCAST:</b> ${dstr(dp[0])}–${dstr(dp[dp.length-1])}`);
   }
-  parts.push(`<b>LINES:</b> ${fmt0(inv.length+sh.length+pr.length)}`);
-  document.getElementById('metaLine').innerHTML = parts.length>1 ? parts.join(' · ') : 'No data loaded — use the upload buttons to begin.';
+  document.getElementById('metaLine').innerHTML = parts.length ? parts.join(' · ') : 'No data loaded — use the upload buttons to begin.';
 }
 
 /* =====================================================================
@@ -1243,10 +1692,19 @@ function renderAll(){
   renderInventory();
   renderAging();
   renderShipping();
+  renderMillRuns();
   renderProduction();
   renderVs();
   renderSnapshot();
   renderBayStrip();
+  syncProdSubTab();
+}
+
+function syncProdSubTab(){
+  const sub = STATE.filters.prodSub || 'runs';
+  document.querySelectorAll('#prodSubtabs .subtab').forEach(t => t.classList.toggle('active', t.dataset.sub===sub));
+  document.getElementById('prodSub-runs').style.display = sub==='runs' ? 'block' : 'none';
+  document.getElementById('prodSub-fc').style.display   = sub==='fc'   ? 'block' : 'none';
 }
 
 function esc(s){ return String(s==null?'':s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
@@ -1283,6 +1741,25 @@ async function handleUpload(file, kind){
   clearBanner();
   banner('Reading '+file.name+' …');
   try{
+    // Mill-run CSVs are large (100k+ rows) — parse text directly
+    if(kind === 'mill1' || kind === 'mill2'){
+      const text = await readTextFile(file);
+      banner('Parsing '+fmt0(text.length)+' chars from '+file.name+' …');
+      const csvRows = parseCsvText(text);
+      const mill = kind === 'mill1' ? '1' : '2';
+      const bundles = parseMillRuns(csvRows, mill);
+      if(!bundles.length){ banner('No bundles parsed from '+file.name+'. Check column headers.','warn'); return; }
+      STATE.millBundles[mill] = bundles;
+      const rolls = computeRollings(bundles);
+      STATE.rollings[mill] = rolls;
+      saveState();
+      banner(`Loaded ${fmt0(bundles.length)} bundles → ${fmt0(rolls.length)} rollings on Mill ${mill}.`);
+      setTimeout(clearBanner, 4000);
+      STATE.filters.prodSub = 'runs';
+      renderAll();
+      return;
+    }
+
     let rows = null;
     // UTF-16 / TSV files (the NSTX forecast .xls export is one of these)
     const tsv = await readMaybeUtf16Tsv(file);
@@ -1304,6 +1781,7 @@ async function handleUpload(file, kind){
     saveState();
     banner(`Loaded ${fmt0(parsed.length)} ${kind} rows from ${file.name}.`);
     setTimeout(clearBanner, 4000);
+    if(kind === 'prod') STATE.filters.prodSub = 'fc';
     renderAll();
   }catch(e){
     console.error(e);
@@ -1312,7 +1790,27 @@ async function handleUpload(file, kind){
 }
 document.getElementById('fileInv').addEventListener('change', e => handleUpload(e.target.files[0],'inv'));
 document.getElementById('fileShip').addEventListener('change', e => handleUpload(e.target.files[0],'ship'));
+document.getElementById('fileMill1').addEventListener('change', e => handleUpload(e.target.files[0],'mill1'));
+document.getElementById('fileMill2').addEventListener('change', e => handleUpload(e.target.files[0],'mill2'));
 document.getElementById('fileProd').addEventListener('change', e => handleUpload(e.target.files[0],'prod'));
+
+/* Production sub-tab toggle (Mill Runs / Forecast) */
+document.querySelectorAll('#prodSubtabs .subtab').forEach(t => t.addEventListener('click', () => {
+  STATE.filters.prodSub = t.dataset.sub;
+  saveState(); syncProdSubTab();
+}));
+
+/* Gantt window + min-span chips */
+document.querySelectorAll('.gantt-controls .chip[data-gw]').forEach(c => c.addEventListener('click', () => {
+  STATE.filters.ganttWindow = c.dataset.gw;
+  document.querySelectorAll('.gantt-controls .chip[data-gw]').forEach(x => x.classList.toggle('active', x===c));
+  saveState(); renderMillRuns();
+}));
+document.querySelectorAll('.gantt-controls .chip[data-gmin]').forEach(c => c.addEventListener('click', () => {
+  STATE.filters.ganttMin = Number(c.dataset.gmin);
+  document.querySelectorAll('.gantt-controls .chip[data-gmin]').forEach(x => x.classList.toggle('active', x===c));
+  saveState(); renderMillRuns();
+}));
 
 document.getElementById('btnBackup').addEventListener('click', () => {
   const blob = new Blob([JSON.stringify(STATE)], {type:'application/json'});
@@ -1330,8 +1828,11 @@ document.getElementById('fileRestore').addEventListener('change', e => {
       STATE.inventory = (s.inventory||[]).map(r => ({...r, originDate: r.originDate?new Date(r.originDate):null}));
       STATE.shipments = (s.shipments||[]).map(r => ({...r, date: r.date?new Date(r.date):null}));
       STATE.production = (s.production||[]).map(r => ({...r, date: r.date?new Date(r.date):null}));
+      const reviveRoll = arr => (arr||[]).map(r => ({...r, start: r.start?new Date(r.start):null, end: r.end?new Date(r.end):null}));
+      STATE.rollings = { '1': reviveRoll(s.rollings && s.rollings['1']), '2': reviveRoll(s.rollings && s.rollings['2']) };
+      STATE.millBundles = { '1': [], '2': [] };
       saveState();
-      banner('Restored: '+fmt0(STATE.inventory.length)+' inventory · '+fmt0(STATE.shipments.length)+' shipment lines · '+fmt0(STATE.production.length)+' production rows');
+      banner('Restored: '+fmt0(STATE.inventory.length)+' inv · '+fmt0(STATE.shipments.length)+' ship lines · '+fmt0(STATE.rollings['1'].length)+'+'+fmt0(STATE.rollings['2'].length)+' rollings · '+fmt0(STATE.production.length)+' fcast rows');
       renderAll();
     }catch(err){ banner('Restore failed: '+err.message,'err'); }
   };
@@ -1340,6 +1841,8 @@ document.getElementById('fileRestore').addEventListener('change', e => {
 document.getElementById('btnClear').addEventListener('click', () => {
   if(!confirm('Clear all loaded data from this browser?')) return;
   STATE.inventory = []; STATE.shipments = []; STATE.production = [];
+  STATE.millBundles = { '1': [], '2': [] };
+  STATE.rollings = { '1': [], '2': [] };
   saveState(); banner('Cleared.'); setTimeout(clearBanner,2000); renderAll();
 });
 document.getElementById('btnExport').addEventListener('click', () => {
@@ -1347,7 +1850,14 @@ document.getElementById('btnExport').addEventListener('click', () => {
   let rows = [], name = 'export';
   if(view==='inv' || view==='aging'){ rows = applyInvFilters(); name='inventory'; }
   else if(view==='ship'){ rows = applyShipFilters(); name='shipments'; }
-  else if(view==='prod'){ rows = applyProdFilters(); name='production'; }
+  else if(view==='prod'){
+    if(STATE.filters.prodSub === 'runs'){
+      rows = applyRollings().map(r => ({...r, start: dstr(r.start), end: dstr(r.end)}));
+      name = 'rollings';
+    } else {
+      rows = applyProdFilters(); name = 'forecast';
+    }
+  }
   else { rows = applyInvFilters(); name='inventory'; }
   if(!rows.length){ banner('Nothing to export on this view.','warn'); return; }
   const ws = XLSX.utils.json_to_sheet(rows.map(r=>{ const o={...r}; for(const k in o) if(o[k] instanceof Date) o[k] = dstr(o[k]); return o; }));
@@ -1358,9 +1868,13 @@ document.getElementById('btnExport').addEventListener('click', () => {
 /* Initial */
 loadState();
 renderAll();
-if(STATE.inventory.length || STATE.shipments.length || STATE.production.length){
-  banner('Restored: '+fmt0(STATE.inventory.length)+' inventory · '+fmt0(STATE.shipments.length)+' shipment lines · '+fmt0(STATE.production.length)+' production rows');
-  setTimeout(clearBanner, 4000);
+const totalLoaded = STATE.inventory.length + STATE.shipments.length + STATE.production.length + (STATE.rollings['1']||[]).length + (STATE.rollings['2']||[]).length;
+if(totalLoaded){
+  const r1 = (STATE.rollings['1']||[]).length, r2 = (STATE.rollings['2']||[]).length;
+  let msg = 'Restored: '+fmt0(STATE.inventory.length)+' inv · '+fmt0(STATE.shipments.length)+' ship · '+fmt0(STATE.production.length)+' fcast';
+  if(r1 || r2) msg += ` · ${fmt0(r1)}+${fmt0(r2)} rollings (Mill 1/2)`;
+  banner(msg);
+  setTimeout(clearBanner, 5000);
 }
 </script>
 </body>
