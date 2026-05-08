@@ -172,18 +172,21 @@
   .cal-title .meta{font-size:12px;color:var(--gray-500);font-weight:500}
   .cal-grid{display:grid;grid-template-columns:repeat(7,1fr);border:1px solid var(--gray-200);border-radius:6px;overflow:hidden;background:#fff}
   .cal-head{background:var(--gray-50);padding:6px 0;text-align:center;font-size:11px;font-weight:700;color:var(--gray-500);letter-spacing:1.5px;border-bottom:1px solid var(--gray-200)}
-  .cal-cell{height:88px;border-right:1px solid var(--gray-100);border-bottom:1px solid var(--gray-100);position:relative;padding:0;font-size:11px;background:#fff;overflow:hidden}
+  .cal-cell{height:96px;border-right:1px solid var(--gray-100);border-bottom:1px solid var(--gray-100);position:relative;padding:0;font-size:11px;background:#fff;overflow:hidden}
   .cal-cell.outside{background:#fafbfb;color:var(--gray-200)}
   .cal-cell.today{outline:2px solid var(--green);outline-offset:-2px;z-index:1}
   .cal-cell .date{position:absolute;top:3px;right:7px;font-weight:600;color:var(--gray-700);font-size:12px;z-index:2}
   .cal-cell .wk{position:absolute;top:3px;left:7px;font-size:9px;color:var(--gray-500);font-weight:700;letter-spacing:1px;z-index:2}
-  .cal-cell.has-data{cursor:pointer}
-  .cal-cell .label{position:absolute;left:0;right:0;bottom:0;top:22px;color:#fff;font-weight:700;display:flex;flex-direction:column;justify-content:center;align-items:flex-start;line-height:1.2;padding:4px 8px}
-  .cal-cell .label .pid{font-weight:800;font-size:15px;letter-spacing:.3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;width:100%}
-  .cal-cell .label .meta{font-size:11px;font-weight:600;opacity:.95;margin-top:3px}
-  .cal-cell .more{position:absolute;top:22px;right:4px;font-size:9px;color:#fff;font-weight:700;background:rgba(0,0,0,.32);padding:1px 5px;border-radius:8px;z-index:2}
-  .cal-cell.has-data:hover{filter:brightness(1.06)}
-  .cal-cell.selected{outline:2px solid #000;outline-offset:-2px;z-index:1}
+  .cal-cell.has-data{cursor:default}
+  /* Each cell now hosts a vertical stack of bars (one per session that
+     overlapped that day). Bar heights are flex-weighted by hoursToday. */
+  .cal-stack{position:absolute;left:0;right:0;top:22px;bottom:0;display:flex;flex-direction:column}
+  .cal-bar{color:#fff;font-weight:700;display:flex;flex-direction:column;justify-content:center;line-height:1.15;padding:2px 7px;overflow:hidden;cursor:pointer;border-bottom:1px solid rgba(255,255,255,.18)}
+  .cal-bar:last-child{border-bottom:none}
+  .cal-bar .pid{font-weight:800;font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;letter-spacing:.2px}
+  .cal-bar .meta{font-size:10.5px;font-weight:600;opacity:.95}
+  .cal-bar:hover{filter:brightness(1.08)}
+  .cal-bar.selected{outline:1.5px solid #000;outline-offset:-1.5px;z-index:2}
 
   /* Detail Report — slicers + drill-down */
   .slicer-row{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-bottom:10px}
@@ -1940,16 +1943,14 @@ function renderGanttCalendar(rollings, pidColors){
       <div class="cal-grid">`;
     for(const d of dows) html += `<div class="cal-head">${d}</div>`;
 
-    // Track the previous cell's campaign key (resets at each Sunday and
-    // on outside/empty cells) so tons/hours show only on the first cell
-    // of each row segment, not on every continuation day.
-    let prevKey = null;
+    // Track which campaigns we've already labeled in the current week row,
+    // so the tons/hours line shows only on the first cell of each row segment.
+    let seenInRow = new Set();
     for(let i=0;i<totalCells;i++){
-      if(i % 7 === 0) prevKey = null;            // new week row resets the chain
+      if(i % 7 === 0) seenInRow = new Set();
       const dnum = i - startDow + 1;
       if(dnum < 1 || dnum > daysInMonth){
         html += '<div class="cal-cell outside"></div>';
-        prevKey = null;
         continue;
       }
       const date = new Date(year, mon, dnum);
@@ -1960,30 +1961,35 @@ function renderGanttCalendar(rollings, pidColors){
       const entries = dayMap[k];
       if(!entries || !entries.length){
         html += `<div class="cal-cell${cellTodayCls}"><span class="wk">${wkLbl}</span><span class="date">${dnum}</span></div>`;
-        prevKey = null;
         continue;
       }
-      const top = entries[0];
-      const r = top.rolling;
-      const fill = (pidColors && pidColors[r.productId]) || PRODUCT_COLORS[r.product] || '#7f8c8d';
-      const selCls = STATE.filters.rollingKeyFilter === r.key ? ' selected' : '';
-      const moreN = entries.length - 1;
-      // Show tons/hours only on the first cell of each row segment for this
-      // campaign — continuation cells just carry the (now larger) Product ID.
-      const isFirstSegment = (prevKey !== r.key);
-      prevKey = r.key;
-      html += `<div class="cal-cell has-data${cellTodayCls}${selCls}" data-key="${esc(r.key)}" data-day="${k}"
+      // Sort sessions within the day by start time so the stack reads
+      // chronologically top→bottom.
+      const ordered = entries.slice().sort((a,b) => a.rolling.start - b.rolling.start);
+      const bars = ordered.map(e => {
+        const r = e.rolling;
+        const fill = (pidColors && pidColors[r.productId]) || PRODUCT_COLORS[r.product] || '#7f8c8d';
+        const isFirstSegment = !seenInRow.has(r.key);
+        seenInRow.add(r.key);
+        const flex = Math.max(0.5, e.hoursToday); // protect tiny sessions from disappearing
+        const selCls = STATE.filters.rollingKeyFilter === r.key ? ' selected' : '';
+        // Show meta if bar likely tall enough for two lines
+        const showMeta = isFirstSegment && e.hoursToday >= 2;
+        return `<div class="cal-bar${selCls}" style="background:${fill};flex:${flex.toFixed(2)} 1 0"
+                  data-key="${esc(r.key)}" data-mill="${curMill}"
                   data-pid="${esc(r.productId)}" data-grade="${esc(r.grade)}" data-disp="${esc(r.disposition)}"
                   data-rstart="${r.start.toISOString()}" data-rend="${r.end.toISOString()}"
                   data-rtons="${r.tons.toFixed(1)}" data-rhours="${r.hours.toFixed(1)}" data-rbundles="${r.bundles}"
+                  data-htoday="${e.hoursToday.toFixed(1)}"
                   data-gap="${r.gapDays==null?'':r.gapDays.toFixed(2)}">
+          <span class="pid">${esc(r.productId)}</span>
+          ${showMeta ? `<span class="meta">${fmt0(r.tons)}t · ${fmt0(r.hours)}h</span>` : ''}
+        </div>`;
+      }).join('');
+      html += `<div class="cal-cell has-data${cellTodayCls}">
         <span class="wk">${wkLbl}</span>
         <span class="date">${dnum}</span>
-        <div class="label" style="background:${fill}">
-          <span class="pid">${esc(r.productId)}</span>
-          ${isFirstSegment ? `<span class="meta">${fmt0(r.tons)}t · ${fmt0(r.hours)}h</span>` : ''}
-        </div>
-        ${moreN>0?`<span class="more">+${moreN}</span>`:''}
+        <div class="cal-stack">${bars}</div>
       </div>`;
     }
     html += '</div></div>';
@@ -1999,25 +2005,27 @@ function renderGanttCalendar(rollings, pidColors){
   }));
 
   // Cell hover/click
-  cal.querySelectorAll('.cal-cell.has-data').forEach(cell => {
-    cell.addEventListener('mouseenter', e => {
+  cal.querySelectorAll('.cal-bar').forEach(bar => {
+    bar.addEventListener('mouseenter', e => {
       const d = e.currentTarget.dataset;
       const gap = d.gap === '' ? null : Number(d.gap);
-      tip.innerHTML = `<b>${esc(d.pid)}</b> · Mill ${curMill}<br>
+      tip.innerHTML = `<b>${esc(d.pid)}</b> · Mill ${esc(d.mill||curMill)}<br>
         Grade: ${esc(d.grade)} · Disp: ${esc(d.disp)}<br>
-        ${d.rstart.slice(0,16).replace('T',' ')} → ${d.rend.slice(0,16).replace('T',' ')}<br>
+        Hours on this day: <b>${fmt1(Number(d.htoday||0))} hrs</b><br>
+        Full session: ${d.rstart.slice(0,16).replace('T',' ')} → ${d.rend.slice(0,16).replace('T',' ')}<br>
         <b>${fmt1(Number(d.rtons))} tons</b> · ${fmt1(Number(d.rhours))} hrs · ${fmt0(Number(d.rbundles))} bundles<br>
         <span style="color:#bdc3c7;font-size:11px">Gap since previous run of this product:</span> <b>${fmtGapDays(gap)}</b>`;
       tip.style.display = 'block';
     });
-    cell.addEventListener('mousemove', e => {
+    bar.addEventListener('mousemove', e => {
       const r = document.getElementById('ganttWrap').getBoundingClientRect();
       tip.style.left = (e.clientX - r.left + 12) + 'px';
       tip.style.top = (e.clientY - r.top + 12) + 'px';
     });
-    cell.addEventListener('mouseleave', () => { tip.style.display='none'; });
-    cell.addEventListener('click', () => {
-      const k = cell.dataset.key;
+    bar.addEventListener('mouseleave', () => { tip.style.display='none'; });
+    bar.addEventListener('click', e => {
+      e.stopPropagation();
+      const k = bar.dataset.key;
       STATE.filters.rollingKeyFilter = STATE.filters.rollingKeyFilter === k ? null : k;
       renderMillRuns();
     });
