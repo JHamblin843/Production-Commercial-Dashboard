@@ -491,24 +491,41 @@ function mmToFtIn(mm){
   return ft+"' "+inches+'"';
 }
 
-/* Nucor fiscal calendar — FY2026 W1 starts Sunday Jan 4 2026 (per the
-   uploaded calendar JPG and the NSTX file: W16 begins 4/19/2026).
-   Week is Sunday → Saturday. */
-const FY26_W1 = new Date(2026, 0, 4);
-const FY25_WEEKS = 52;
-const FY26_WEEKS = 52;
+/* Nucor fiscal calendar — fiscal year = calendar year. W1 of FY{Y} starts
+   on the first Sunday on/after Jan 4 of year Y (verified against the FY2025
+   and FY2026 calendars: FY2025 W1 = Sun Jan 5, FY2026 W1 = Sun Jan 4).
+   Days in calendar year Y that fall before W1 or whose Sun-Sat week
+   crosses the Dec 31/Jan 1 boundary are labeled "WX" (per the PDF
+   convention) and still belong to FY{Y}. */
+function fiscalW1(year){
+  const w1 = new Date(year, 0, 4);
+  while(w1.getDay() !== 0) w1.setDate(w1.getDate() + 1);
+  return w1;
+}
 function fiscalWeek(date){
   if(!(date instanceof Date)) date = new Date(date);
-  const d = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+  const cy = date.getFullYear();
+  const w1 = fiscalW1(cy);
+  const d = new Date(cy, date.getMonth(), date.getDate());
   const sun = new Date(d.getTime() - d.getDay()*86400000);
-  const diff = Math.round((sun - FY26_W1) / 86400000);
-  let wk = Math.floor(diff/7) + 1;
-  let year = 2026;
-  if(wk < 1){ year = 2025; wk = FY25_WEEKS + wk; if(wk < 1) wk = 1; }
-  else if(wk > FY26_WEEKS){ year = 2027; wk = wk - FY26_WEEKS; }
-  const end = new Date(sun.getTime() + 7*86400000 - 1);
-  return { wk, year, start: sun, end };
+  const sat = new Date(sun.getTime() + 6*86400000);
+  // Days before W1 of their calendar year are leading X (e.g. Jan 1-4 2025
+  // is FY2025 WX; Jan 1-3 2026 is FY2026 WX).
+  if(date < w1){
+    return { wk: 'X', isX: true, year: cy, start: sun, end: sat };
+  }
+  // Otherwise compute week number from W1; partial weeks at year-end
+  // (e.g. Dec 28-31 2025 = W52, only 4 days) keep their W## label.
+  const wkNum = Math.floor((sun - w1) / 86400000 / 7) + 1;
+  if(wkNum > 52){
+    return { wk: 'X', isX: true, year: cy, start: sun, end: sat };
+  }
+  return { wk: wkNum, isX: false, year: cy, start: sun, end: sat };
 }
+function fiscalWeekLabel(fw){
+  return fw.isX ? 'WX' : 'W' + String(fw.wk).padStart(2,'0');
+}
+const FY26_W1 = fiscalW1(2026); // kept for legacy refs (e.g. splitSubAtWeekBoundaries fallback)
 function fiscalWeekKey(date){
   const fw = fiscalWeek(date);
   return 'FY'+fw.year+'-W'+String(fw.wk).padStart(2,'0');
@@ -535,7 +552,7 @@ function splitSubAtWeekBoundaries(sub){
     const segMs = segEndMs - cursor.getTime();
     const ratio = segMs / totalMs;
     out.push({
-      weekKey: 'FY'+fw.year+'-W'+String(fw.wk).padStart(2,'0'),
+      weekKey: 'FY'+fw.year+'-'+(fw.isX?'WX-'+(cursor.getMonth()<6?'A':'B'):'W'+String(fw.wk).padStart(2,'0')),
       week: fw,
       start: new Date(cursor),
       end: new Date(segEndMs),
@@ -1697,7 +1714,7 @@ function renderGanttCalendar(rollings, pidColors){
       const date = new Date(year, mon, dnum);
       const k = dstr(date);
       const fw = fiscalWeek(date);
-      const wkLbl = 'W' + String(fw.wk).padStart(2,'0');
+      const wkLbl = fiscalWeekLabel(fw);
       const cellTodayCls = (k === todayKey) ? ' today' : '';
       const entries = dayMap[k];
       if(!entries || !entries.length){
@@ -1709,15 +1726,11 @@ function renderGanttCalendar(rollings, pidColors){
       const fill = (pidColors && pidColors[r.productId]) || PRODUCT_COLORS[r.product] || '#7f8c8d';
       const selCls = STATE.filters.rollingKeyFilter === r.key ? ' selected' : '';
       const moreN = entries.length - 1;
-      const tonsToday = entries.reduce((a,e)=>a+e.tonsToday,0);
-      const hoursToday = entries.reduce((a,e)=>a+e.hoursToday,0);
-      const lenLabel = r.lengthBreakdown && r.lengthBreakdown[0]
-        ? (r.lengthCount===1 ? mmToFtIn(r.lengthBreakdown[0].length) : mmToFtIn(r.lengthBreakdown[0].length)+' +'+(r.lengthCount-1))
-        : '';
+      // Each cell shows the dominant session's TOTAL tons/hours, not the
+      // slice that fell on today — same number repeats across every day
+      // the session covers, making multi-day campaigns easy to read.
       html += `<div class="cal-cell has-data${cellTodayCls}${selCls}" data-key="${esc(r.key)}" data-day="${k}"
                   data-pid="${esc(r.productId)}" data-grade="${esc(r.grade)}" data-disp="${esc(r.disposition)}"
-                  data-len="${esc(lenLabel)}"
-                  data-tons-today="${tonsToday.toFixed(1)}" data-hours-today="${hoursToday.toFixed(1)}"
                   data-rstart="${r.start.toISOString()}" data-rend="${r.end.toISOString()}"
                   data-rtons="${r.tons.toFixed(1)}" data-rhours="${r.hours.toFixed(1)}" data-rbundles="${r.bundles}"
                   data-gap="${r.gapDays==null?'':r.gapDays.toFixed(2)}">
@@ -1725,7 +1738,7 @@ function renderGanttCalendar(rollings, pidColors){
         <span class="date">${dnum}</span>
         <div class="label" style="background:${fill}">
           <span class="pid">${esc(r.productId)}</span>
-          <span class="meta">${fmt0(tonsToday)}t · ${fmt1(hoursToday)}h${lenLabel?(' · '+lenLabel):''}</span>
+          <span class="meta">${fmt0(r.tons)}t · ${fmt0(r.hours)}h</span>
         </div>
         ${moreN>0?`<span class="more">+${moreN}</span>`:''}
       </div>`;
@@ -1748,13 +1761,10 @@ function renderGanttCalendar(rollings, pidColors){
       const d = e.currentTarget.dataset;
       const gap = d.gap === '' ? null : Number(d.gap);
       tip.innerHTML = `<b>${esc(d.pid)}</b> · Mill ${curMill}<br>
-        ${esc(d.day)} · Grade: ${esc(d.grade)} · Disp: ${esc(d.disp)}${d.len?' · Lengths: '+esc(d.len):''}<br>
-        <span style="color:#bdc3c7;font-size:11px">— THIS DAY —</span><br>
-        <b>${fmt1(Number(d.tonsToday))} tons</b> · ${fmt1(Number(d.hoursToday))} hrs<br>
-        <span style="color:#bdc3c7;font-size:11px">— FULL SESSION —</span><br>
+        Grade: ${esc(d.grade)} · Disp: ${esc(d.disp)}<br>
         ${d.rstart.slice(0,16).replace('T',' ')} → ${d.rend.slice(0,16).replace('T',' ')}<br>
         <b>${fmt1(Number(d.rtons))} tons</b> · ${fmt1(Number(d.rhours))} hrs · ${fmt0(Number(d.rbundles))} bundles<br>
-        <span style="color:#bdc3c7;font-size:11px">Days since previous run of this product:</span> <b>${fmtGapDays(gap)}</b>`;
+        <span style="color:#bdc3c7;font-size:11px">Gap since previous run of this product:</span> <b>${fmtGapDays(gap)}</b>`;
       tip.style.display = 'block';
     });
     cell.addEventListener('mousemove', e => {
