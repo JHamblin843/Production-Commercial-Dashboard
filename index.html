@@ -1,0 +1,1074 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Operations Dashboard — Inventory vs Production</title>
+<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<style>
+  :root{
+    --green:#006b3f; --green-d:#004d2d; --green-l:#e6f1ec;
+    --red:#c0392b; --orange:#d68910; --amber:#f1c40f; --blue:#2874a6;
+    --gray-50:#f7f8f8; --gray-100:#eceeed; --gray-200:#d8dcda;
+    --gray-500:#6b7470; --gray-700:#3d4441; --gray-900:#1a1f1d;
+    --shadow:0 1px 3px rgba(0,0,0,.06),0 1px 2px rgba(0,0,0,.04);
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;padding:0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;color:var(--gray-900);background:#fff}
+  a{color:var(--green)}
+
+  /* Top nav */
+  .topnav{background:var(--green-d);color:#fff;padding:14px 28px;display:flex;gap:32px;align-items:center;font-size:14px;font-weight:600}
+  .topnav .brand{font-weight:700}
+  .topnav a{color:#fff;text-decoration:none;opacity:.9}
+  .topnav a:hover{opacity:1}
+
+  /* Header bar */
+  .header{display:flex;align-items:center;gap:24px;padding:18px 28px;border-bottom:1px solid var(--gray-100)}
+  .logo{font-weight:800;color:var(--green-d);line-height:1.05;font-size:18px;letter-spacing:.5px}
+  .logo small{display:block;font-size:10px;letter-spacing:2px;color:var(--gray-500);font-weight:700}
+  .title{flex:1}
+  .title h1{margin:0;font-size:22px;color:var(--gray-900)}
+  .title .meta{font-size:12px;color:var(--gray-500);margin-top:4px;letter-spacing:.5px}
+  .title .meta b{color:var(--gray-700);font-weight:700}
+  .actions{display:flex;gap:8px;flex-wrap:wrap}
+  button.btn,label.btn{font:inherit;border:1px solid var(--gray-200);background:#fff;color:var(--gray-700);padding:9px 14px;border-radius:6px;cursor:pointer;font-weight:600;font-size:13px;display:inline-flex;align-items:center;gap:6px}
+  button.btn:hover,label.btn:hover{border-color:var(--gray-500)}
+  button.btn.primary,label.btn.primary{background:var(--green);border-color:var(--green);color:#fff}
+  button.btn.primary:hover,label.btn.primary:hover{background:var(--green-d);border-color:var(--green-d)}
+  button.btn.danger{color:var(--red)}
+  input[type=file]{display:none}
+
+  /* Status banner */
+  .banner{margin:12px 28px 0;padding:8px 14px;border:1px solid #b7d8c5;background:#eef7f1;color:var(--green-d);font-size:13px;border-radius:6px}
+  .banner.warn{border-color:#f0d39a;background:#fdf6e9;color:#7a4f00}
+  .banner.err{border-color:#e8b7b1;background:#fbecea;color:var(--red)}
+
+  /* Tabs */
+  .tabs{display:flex;gap:8px;padding:14px 28px 0;border-bottom:1px solid var(--gray-100);align-items:flex-end;justify-content:space-between}
+  .tabs .group{display:flex;gap:4px}
+  .tab{padding:10px 14px;font-weight:600;font-size:14px;color:var(--gray-500);cursor:pointer;border-bottom:3px solid transparent;background:none;border-left:none;border-right:none;border-top:none}
+  .tab.active{color:var(--green-d);border-bottom-color:var(--green)}
+  .tabs .right{padding-bottom:8px;font-size:12px;color:var(--gray-500)}
+
+  /* Filter strip */
+  .filters{display:flex;align-items:center;gap:10px;padding:12px 28px;background:var(--gray-50);border-bottom:1px solid var(--gray-100);flex-wrap:wrap;font-size:13px}
+  .filters .label{color:var(--gray-500);font-size:11px;letter-spacing:1px;font-weight:700;text-transform:uppercase;margin-right:4px}
+  .chip{padding:6px 12px;border:1px solid var(--gray-200);border-radius:6px;background:#fff;cursor:pointer;font-weight:600;color:var(--gray-700);font-size:13px}
+  .chip:hover{border-color:var(--gray-500)}
+  .chip.active{background:var(--green);color:#fff;border-color:var(--green)}
+  .filters select{font:inherit;padding:6px 8px;border:1px solid var(--gray-200);border-radius:6px;background:#fff}
+  .filters .spacer{flex:1}
+  .filters .summary{font-size:12px;color:var(--gray-500)}
+  .filters .summary b{color:var(--gray-700)}
+  .filters input[type=checkbox]{accent-color:var(--green);transform:translateY(1px)}
+
+  /* Snapshot strip */
+  .snapshot{padding:12px 28px;background:#eef7f1;border-bottom:1px solid #d6e9dd;font-size:13px;color:var(--green-d)}
+  .snapshot b{color:var(--green-d)}
+
+  /* Layout */
+  .content{padding:18px 28px 60px}
+  .grid-bays{display:flex;gap:8px;align-items:center;padding:0 28px 14px;flex-wrap:wrap;font-size:13px}
+
+  /* KPI cards */
+  .kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:14px;margin-bottom:18px}
+  .kpi{padding:16px 18px;border:1px solid var(--gray-100);border-radius:8px;border-top:3px solid var(--green);box-shadow:var(--shadow);background:#fff}
+  .kpi.red{border-top-color:var(--red)} .kpi.red .val{color:var(--red)}
+  .kpi.amber{border-top-color:var(--amber)} .kpi.amber .val{color:var(--orange)}
+  .kpi.blue{border-top-color:var(--blue)} .kpi.blue .val{color:var(--blue)}
+  .kpi.green .val{color:var(--green-d)}
+  .kpi h3{margin:0;font-size:11px;color:var(--gray-500);letter-spacing:1.2px;font-weight:700;text-transform:uppercase}
+  .kpi .val{font-size:30px;font-weight:800;line-height:1.2;margin:6px 0 2px;color:var(--green-d)}
+  .kpi .val small{font-size:13px;font-weight:600;color:var(--gray-500);margin-left:4px}
+  .kpi .sub{font-size:12px;color:var(--gray-500)}
+
+  /* Chart card */
+  .card{border:1px solid var(--gray-100);border-radius:8px;background:#fff;box-shadow:var(--shadow);margin-bottom:18px;overflow:hidden}
+  .card .head{background:var(--green);color:#fff;padding:12px 16px;font-weight:700;font-size:14px;display:flex;justify-content:space-between;align-items:center}
+  .card .head .right{font-size:12px;font-weight:500;opacity:.9}
+  .card .body{padding:14px 16px}
+  .card .sub{font-size:12px;color:var(--gray-500);margin-bottom:10px}
+  .chart-wrap{position:relative;height:340px}
+  .chart-wrap.tall{height:420px}
+
+  /* Tables */
+  table{width:100%;border-collapse:collapse;font-size:13px}
+  table th,table td{padding:8px 10px;text-align:left;border-bottom:1px solid var(--gray-100)}
+  table th{background:var(--gray-50);font-size:11px;letter-spacing:1px;color:var(--gray-500);font-weight:700;text-transform:uppercase}
+  table td.num,table th.num{text-align:right;font-variant-numeric:tabular-nums}
+  table tbody tr:hover{background:var(--gray-50)}
+
+  /* Two-col split */
+  .split{display:grid;grid-template-columns:1fr 1fr;gap:18px}
+  @media (max-width:980px){.split{grid-template-columns:1fr}}
+
+  /* Empty state */
+  .empty{padding:60px 20px;text-align:center;color:var(--gray-500)}
+  .empty h2{color:var(--gray-700);margin:0 0 6px;font-size:18px}
+  .empty p{margin:6px 0}
+
+  /* Hide tabs */
+  .view{display:none}
+  .view.active{display:block}
+
+  /* Settings link */
+  .right .link{color:var(--green-d);text-decoration:none;font-weight:600;cursor:pointer}
+  .right .link:hover{text-decoration:underline}
+
+  /* Forecast cards */
+  .forecast{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin-bottom:14px}
+  @media (max-width:1100px){.forecast{grid-template-columns:1fr}}
+  .forecast .fcast{padding:14px 16px;border:1px solid #cfdef0;border-radius:8px;background:repeating-linear-gradient(135deg,#eef4fb,#eef4fb 8px,#e2ecf6 8px,#e2ecf6 16px)}
+  .forecast .tag{display:inline-block;background:#1f4e79;color:#fff;padding:2px 8px;border-radius:4px;font-size:10px;font-weight:700;letter-spacing:1px;margin-bottom:8px}
+  .forecast .label{font-size:11px;color:var(--gray-500);letter-spacing:1.2px;font-weight:700;text-transform:uppercase}
+  .forecast .val{font-size:26px;font-weight:800;color:var(--blue)}
+  .forecast .val small{font-size:13px;font-weight:600;color:var(--gray-500);margin-left:4px}
+  .forecast .sub{font-size:12px;color:var(--gray-500);margin-top:4px}
+
+  /* Goal banner */
+  .goal{display:flex;gap:32px;align-items:center;padding:14px 18px;background:#eef7f1;border:1px solid #cfe4d6;border-radius:8px;margin-bottom:14px}
+  .goal .item .l{font-size:11px;color:var(--gray-500);letter-spacing:1.2px;font-weight:700;text-transform:uppercase}
+  .goal .item .v{font-size:24px;font-weight:800;color:var(--green-d)}
+  .goal .item .s{font-size:12px;color:var(--gray-500)}
+  .goal .right{margin-left:auto;text-align:right;color:var(--green-d);font-weight:700}
+  .goal .right .l{font-size:11px;letter-spacing:1.2px;font-weight:700}
+  .goal .right .s{font-size:12px;color:var(--gray-500);font-weight:500}
+</style>
+</head>
+<body>
+
+<div class="topnav">
+  <div class="brand">Nucor Steel Texas</div>
+  <a>Inventory Ops</a>
+  <a>Shipping</a>
+  <a>Production</a>
+  <a>Load Performance</a>
+</div>
+
+<div class="header">
+  <div class="logo">NUCOR<small>NUCOR STEEL TEXAS</small></div>
+  <div class="title">
+    <h1>Operations Dashboard</h1>
+    <div class="meta" id="metaLine">No data loaded — use the upload buttons to begin.</div>
+  </div>
+  <div class="actions">
+    <label class="btn primary">Upload Inventory<input type="file" id="fileInv" accept=".xlsx,.xls,.csv" /></label>
+    <label class="btn primary">Upload Shipments<input type="file" id="fileShip" accept=".xlsx,.xls,.csv" /></label>
+    <label class="btn primary">Upload Production<input type="file" id="fileProd" accept=".xlsx,.xls,.csv" /></label>
+    <button class="btn" id="btnExport">Export CSV</button>
+    <button class="btn" id="btnBackup">↓ Backup</button>
+    <label class="btn">↑ Restore<input type="file" id="fileRestore" accept=".json" /></label>
+    <button class="btn danger" id="btnClear">Clear All</button>
+  </div>
+</div>
+
+<div id="banner" class="banner" style="display:none"></div>
+
+<div class="tabs">
+  <div class="group">
+    <button class="tab active" data-view="inv">Inventory ▾</button>
+    <button class="tab" data-view="aging">Inventory Aging ▾</button>
+    <button class="tab" data-view="prod">Production ▾</button>
+    <button class="tab" data-view="ship">Shipping ▾</button>
+    <button class="tab" data-view="vs">Inv vs Production ▾</button>
+  </div>
+  <div class="right"><a class="link" id="settingsLink">Settings</a></div>
+</div>
+
+<!-- Filter strip (visible on inv-style tabs) -->
+<div class="filters" id="filterStrip">
+  <span class="label">Product:</span>
+  <button class="chip active" data-prod="ALL">All</button>
+  <button class="chip" data-prod="REBAR">Rebar</button>
+  <button class="chip" data-prod="HR-MBQ">MBQ</button>
+  <button class="chip" data-prod="EB-SBQ">EB (SBQ)</button>
+  <button class="chip" data-prod="BILLETS">Billets</button>
+  <span style="display:inline-flex;gap:6px;align-items:center;margin-left:14px"><input type="checkbox" id="includeHold" checked /> Include Hold</span>
+  <span class="spacer"></span>
+  <span class="summary" id="filterSummary">—</span>
+</div>
+
+<!-- Snapshot banner shown on inv tabs -->
+<div id="snapshot" class="snapshot" style="display:none"></div>
+
+<!-- Bay/Zone strip shown on inventory tab -->
+<div id="bayStrip" class="grid-bays" style="display:none">
+  <span class="label">Bay / Zone:</span>
+  <button class="chip active" data-bay="ALL">All Bays &amp; Zones</button>
+</div>
+
+<div class="content">
+
+<!-- ============ INVENTORY ============ -->
+<section class="view active" id="view-inv">
+  <div class="kpis" id="invKpis"></div>
+  <div class="card">
+    <div class="head">Inventory by Bay / Zone — Tons Stacked by Product<span class="right">Click a bar to filter the page to that zone.</span></div>
+    <div class="body">
+      <div class="sub">Shows product mix within each zone: REBAR · HR-MBQ · EB (SBQ) · Billets.</div>
+      <div class="chart-wrap tall"><canvas id="chartBay"></canvas></div>
+    </div>
+  </div>
+  <div class="split">
+    <div class="card">
+      <div class="head">Top Items by Tons</div>
+      <div class="body" style="max-height:380px;overflow:auto"><table id="tblTopItems"></table></div>
+    </div>
+    <div class="card">
+      <div class="head">Material Status Mix</div>
+      <div class="body"><div class="chart-wrap" style="height:300px"><canvas id="chartStatus"></canvas></div></div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ INVENTORY AGING ============ -->
+<section class="view" id="view-aging">
+  <div class="kpis" id="ageKpis"></div>
+  <div class="card">
+    <div class="head">Age Distribution<span class="right">Click any bar to filter the charts below.</span></div>
+    <div class="body"><div class="chart-wrap tall"><canvas id="chartAge"></canvas></div></div>
+  </div>
+  <div class="card">
+    <div class="head">Stagnant Inventory (30+ days) — Top Items</div>
+    <div class="body" style="max-height:420px;overflow:auto"><table id="tblStagnant"></table></div>
+  </div>
+</section>
+
+<!-- ============ PRODUCTION ============ -->
+<section class="view" id="view-prod">
+  <div id="prodEmpty" class="empty">
+    <h2>No production data loaded yet</h2>
+    <p>Upload a production export to see daily output, mix, and run tracking.</p>
+    <p style="font-size:12px">Expected fields: <b>date, product, item, tons, line/shift, heat (optional)</b>. The dashboard auto-detects column names.</p>
+  </div>
+  <div id="prodContent" style="display:none">
+    <div class="kpis" id="prodKpis"></div>
+    <div class="card">
+      <div class="head">Daily Production — Tons by Product</div>
+      <div class="body"><div class="chart-wrap tall"><canvas id="chartProd"></canvas></div></div>
+    </div>
+    <div class="split">
+      <div class="card">
+        <div class="head">Production Mix</div>
+        <div class="body"><div class="chart-wrap" style="height:300px"><canvas id="chartProdMix"></canvas></div></div>
+      </div>
+      <div class="card">
+        <div class="head">Top Items Produced</div>
+        <div class="body" style="max-height:380px;overflow:auto"><table id="tblProdItems"></table></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ SHIPPING ============ -->
+<section class="view" id="view-ship">
+  <div class="forecast" id="shipForecast"></div>
+  <div class="kpis" id="shipKpis"></div>
+  <div class="card">
+    <div class="head">Daily Shipments — Truck vs Rail<span class="right" id="shipChartToggle">
+      <button class="chip active" data-rng="day">Day</button>
+      <button class="chip" data-rng="wk">Fiscal Week</button>
+      <button class="chip" data-rng="mo">Fiscal Month</button>
+    </span></div>
+    <div class="body"><div class="chart-wrap tall"><canvas id="chartShip"></canvas></div></div>
+  </div>
+  <div class="split">
+    <div class="card">
+      <div class="head">Top Customers (Tons)</div>
+      <div class="body" style="max-height:380px;overflow:auto"><table id="tblCustomers"></table></div>
+    </div>
+    <div class="card">
+      <div class="head">Top Carriers (Loads)</div>
+      <div class="body" style="max-height:380px;overflow:auto"><table id="tblCarriers"></table></div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ INV VS PRODUCTION ============ -->
+<section class="view" id="view-vs">
+  <div class="kpis" id="vsKpis"></div>
+  <div class="card">
+    <div class="head">Built vs Shipped (Daily Tons)<span class="right">Production tons vs shipments tons over time.</span></div>
+    <div class="body"><div class="chart-wrap tall"><canvas id="chartBvS"></canvas></div></div>
+  </div>
+  <div class="card">
+    <div class="head">On-Hand vs Days-of-Supply by Product</div>
+    <div class="body"><table id="tblDOS"></table></div>
+  </div>
+</section>
+
+</div>
+
+<script>
+/* =====================================================================
+ * State + persistence
+ * ===================================================================*/
+const LS_KEY = 'pcd_state_v1';
+const STATE = { inventory: [], shipments: [], production: [], filters: { product: 'ALL', bay: 'ALL', includeHold: true, shipRange: 'day' }, asOf: null };
+
+function saveState(){
+  try{ localStorage.setItem(LS_KEY, JSON.stringify(STATE)); }
+  catch(e){ banner('Could not save to localStorage (data may be too large): '+e.message,'warn'); }
+}
+function loadState(){
+  try{
+    const raw = localStorage.getItem(LS_KEY);
+    if(!raw) return false;
+    const s = JSON.parse(raw);
+    Object.assign(STATE, s);
+    STATE.inventory = (s.inventory||[]).map(r => ({...r, originDate: r.originDate?new Date(r.originDate):null}));
+    STATE.shipments = (s.shipments||[]).map(r => ({...r, date: r.date?new Date(r.date):null}));
+    STATE.production = (s.production||[]).map(r => ({...r, date: r.date?new Date(r.date):null}));
+    return true;
+  }catch(e){ console.warn(e); return false; }
+}
+
+function banner(msg, kind){
+  const el = document.getElementById('banner');
+  el.className = 'banner' + (kind?' '+kind:'');
+  el.textContent = msg;
+  el.style.display = 'block';
+}
+function clearBanner(){ document.getElementById('banner').style.display='none'; }
+
+/* =====================================================================
+ * Helpers
+ * ===================================================================*/
+const fmtN = n => (n==null||isNaN(n)) ? '—' : Math.round(n).toLocaleString();
+const fmt1 = n => (n==null||isNaN(n)) ? '—' : (Math.round(n*10)/10).toLocaleString(undefined,{minimumFractionDigits:1,maximumFractionDigits:1});
+const fmt0 = n => (n==null||isNaN(n)) ? '—' : Math.round(n).toLocaleString();
+const dstr = d => d instanceof Date && !isNaN(d) ? d.toISOString().slice(0,10) : '';
+const today = () => { const t = new Date(); t.setHours(0,0,0,0); return t; };
+const daysBetween = (a,b) => Math.floor((a-b)/86400000);
+
+function classifyProduct(text){
+  if(!text) return 'OTHER';
+  const t = String(text).toUpperCase();
+  if(t.includes('REBAR')) return 'REBAR';
+  if(t.includes('HR-MBQ') || t.includes('MBQ')) return 'HR-MBQ';
+  if(t.includes('SBQ') || t.includes('EB ')) return 'EB-SBQ';
+  if(t.includes('BILLET')) return 'BILLETS';
+  return 'OTHER';
+}
+const PRODUCT_COLORS = { REBAR:'#006b3f', 'HR-MBQ':'#d68910', 'EB-SBQ':'#7d3c98', BILLETS:'#2874a6', OTHER:'#7f8c8d' };
+const PRODUCT_LABEL = { REBAR:'Rebar', 'HR-MBQ':'MBQ', 'EB-SBQ':'EB (SBQ)', BILLETS:'Billets', OTHER:'Other' };
+
+function classifyMode(shipMethod, carrier){
+  const s = ((shipMethod||'')+' '+(carrier||'')).toUpperCase();
+  if(s.includes('RAIL')) return 'RAIL';
+  if(s.includes('TRUCK')) return 'TRUCK';
+  return 'TRUCK'; // default
+}
+
+/* Excel serial date → JS Date */
+function xlDate(v){
+  if(v instanceof Date) return v;
+  if(typeof v === 'number'){ const d = XLSX.SSF.parse_date_code(v); if(!d) return null; return new Date(Date.UTC(d.y,d.m-1,d.d)); }
+  if(typeof v === 'string'){ const d = new Date(v); return isNaN(d) ? null : d; }
+  return null;
+}
+
+/* =====================================================================
+ * File parsing
+ * ===================================================================*/
+function readWorkbook(file){
+  return new Promise((res,rej)=>{
+    const r = new FileReader();
+    r.onload = e => {
+      try{
+        const data = new Uint8Array(e.target.result);
+        const wb = XLSX.read(data, { type:'array', cellDates:true });
+        res(wb);
+      }catch(err){ rej(err); }
+    };
+    r.onerror = () => rej(r.error);
+    r.readAsArrayBuffer(file);
+  });
+}
+
+/* Find header row by looking for a row with the most known header tokens */
+function findHeaderRow(rows, expected){
+  let best=-1, bestScore=0;
+  for(let i=0;i<Math.min(rows.length,30);i++){
+    const r = rows[i] || [];
+    let score = 0;
+    for(const cell of r){
+      if(!cell) continue;
+      const s = String(cell).toLowerCase().trim();
+      if(expected.some(k => s === k || s.includes(k))) score++;
+    }
+    if(score > bestScore){ bestScore = score; best = i; }
+  }
+  return bestScore >= 2 ? best : 0;
+}
+
+function rowsAsObjects(rows, headerIdx){
+  const headers = (rows[headerIdx]||[]).map(h => h==null?'':String(h).trim());
+  const out = [];
+  for(let i=headerIdx+1;i<rows.length;i++){
+    const r = rows[i] || [];
+    if(r.every(c => c==null || c==='')) continue;
+    const obj = {};
+    headers.forEach((h,idx)=>{ if(h) obj[h] = r[idx]; });
+    out.push(obj);
+  }
+  return { headers, rows: out };
+}
+
+function parseInventory(rows){
+  const hi = findHeaderRow(rows, ['item number','zone','locator','lpn','tons','material status']);
+  const { rows: objs } = rowsAsObjects(rows, hi);
+  const out = [];
+  for(const o of objs){
+    const itemNum = o['Item Number'];
+    const desc = o['Item Description'];
+    // Skip subtotal rows: those with no LPN and/or "Total" in identifier
+    if(!o['LPN']) continue;
+    if(!itemNum || String(itemNum).toLowerCase().includes('total')) continue;
+    const tons = Number(o['TONS'])||0;
+    const date = xlDate(o['Origination Date']);
+    out.push({
+      itemNum: String(itemNum),
+      desc: desc?String(desc):'',
+      product: classifyProduct(desc || itemNum),
+      zone: o['Zone']==null?'':String(o['Zone']),
+      locator: o['Locator']?String(o['Locator']):'',
+      lot: o['Lot']?String(o['Lot']):'',
+      lpn: String(o['LPN']),
+      status: o['Material Status']?String(o['Material Status']):'',
+      originDate: date,
+      lpns: Number(o['LPNs'])||1,
+      tons,
+      lbs: Number(o['LBS'])||0,
+      pcs: Number(o['PCS'])||0
+    });
+  }
+  return out;
+}
+
+function parseShipments(rows){
+  const hi = findHeaderRow(rows, ['actual shipment date','carrier name','customer name','shipped quantity','product type']);
+  const { rows: objs } = rowsAsObjects(rows, hi);
+  const out = [];
+  for(const o of objs){
+    const date = xlDate(o['Actual Shipment Date']);
+    if(!date) continue;
+    const qty = Number(o['Shipped Quantity'])||0;
+    out.push({
+      date,
+      trip: o['Trip Number']?String(o['Trip Number']):'',
+      delivery: o['Delivery Number']?String(o['Delivery Number']):'',
+      shipMethod: o['Ship Method']?String(o['Ship Method']):'',
+      carrier: o['Carrier Name']?String(o['Carrier Name']):'',
+      bol: o['BOL']?String(o['BOL']):'',
+      orderType: o['Order Type']?String(o['Order Type']):'',
+      customer: o['Customer Name']?String(o['Customer Name']):'',
+      city: o['Ship To City']?String(o['Ship To City']):'',
+      productType: o['Product Type']?String(o['Product Type']):'',
+      product: classifyProduct(o['Product Type'] || o['Item Description']),
+      desc: o['Item Description']?String(o['Item Description']):'',
+      tons: qty,
+      uom: o['UOM']?String(o['UOM']):'',
+      mode: classifyMode(o['Ship Method'], o['Carrier Name'])
+    });
+  }
+  return out;
+}
+
+function parseProduction(rows){
+  // Auto-detect: find header row that has at least date + tons-ish fields
+  const hi = findHeaderRow(rows, ['date','tons','product','item','heat','line','shift']);
+  const { headers, rows: objs } = rowsAsObjects(rows, hi);
+  // Pick best column names
+  const find = (...keys) => {
+    const lc = headers.map(h => (h||'').toLowerCase());
+    for(const k of keys){ const i = lc.findIndex(h => h.includes(k)); if(i>=0) return headers[i]; }
+    return null;
+  };
+  const cDate = find('actual production','prod date','date','run date');
+  const cTons = find('tons','quantity','qty','weight','lbs');
+  const cProd = find('product type','product');
+  const cItem = find('item description','description','item');
+  const cHeat = find('heat');
+  const cLine = find('line','mill');
+  const cShift = find('shift','crew');
+  const out = [];
+  for(const o of objs){
+    const date = cDate ? xlDate(o[cDate]) : null;
+    if(!date) continue;
+    let tons = cTons ? Number(o[cTons])||0 : 0;
+    if(cTons && /lb/i.test(cTons)) tons = tons/2000;
+    out.push({
+      date,
+      product: classifyProduct((cProd?o[cProd]:null) || (cItem?o[cItem]:null)),
+      desc: cItem?String(o[cItem]||''):'',
+      heat: cHeat?String(o[cHeat]||''):'',
+      line: cLine?String(o[cLine]||''):'',
+      shift: cShift?String(o[cShift]||''):'',
+      tons
+    });
+  }
+  return out;
+}
+
+/* =====================================================================
+ * Filtering
+ * ===================================================================*/
+function applyInvFilters(){
+  const { product, bay, includeHold } = STATE.filters;
+  return STATE.inventory.filter(r => {
+    if(product !== 'ALL' && r.product !== product) return false;
+    if(bay !== 'ALL' && r.zone !== bay) return false;
+    if(!includeHold && /hold/i.test(r.status)) return false;
+    return true;
+  });
+}
+function applyShipFilters(){
+  const { product } = STATE.filters;
+  return STATE.shipments.filter(r => {
+    if(product !== 'ALL' && r.product !== product) return false;
+    return true;
+  });
+}
+function applyProdFilters(){
+  const { product } = STATE.filters;
+  return STATE.production.filter(r => {
+    if(product !== 'ALL' && r.product !== product) return false;
+    return true;
+  });
+}
+
+/* =====================================================================
+ * Charts (singletons)
+ * ===================================================================*/
+const CHARTS = {};
+function makeChart(id, cfg){
+  const ctx = document.getElementById(id);
+  if(!ctx) return null;
+  if(CHARTS[id]) CHARTS[id].destroy();
+  CHARTS[id] = new Chart(ctx, cfg);
+  return CHARTS[id];
+}
+
+/* =====================================================================
+ * Render: Inventory tab
+ * ===================================================================*/
+function renderInventory(){
+  const inv = applyInvFilters();
+  const totalTons = inv.reduce((a,r)=>a+r.tons,0);
+  const active = inv.filter(r=>/active/i.test(r.status)).reduce((a,r)=>a+r.tons,0);
+  const hold = inv.filter(r=>/hold/i.test(r.status)).reduce((a,r)=>a+r.tons,0);
+  const pending = inv.filter(r=>/pending/i.test(r.status)).reduce((a,r)=>a+r.tons,0);
+  const items = new Set(inv.map(r=>r.itemNum)).size;
+  const lpns = new Set(inv.map(r=>r.lpn)).size;
+  const pct = (v) => totalTons ? Math.round(v/totalTons*100) + '%' : '—';
+
+  document.getElementById('invKpis').innerHTML = `
+    <div class="kpi green"><h3>Total Inventory</h3><div class="val">${fmt1(totalTons)}<small>tons</small></div><div class="sub">${fmt0(items)} unique items</div></div>
+    <div class="kpi green"><h3>Active</h3><div class="val">${fmt1(active)}<small>tons</small></div><div class="sub">${pct(active)}</div></div>
+    <div class="kpi red"><h3>On Hold —</h3><div class="val">${fmt1(hold)}<small>tons</small></div><div class="sub">${pct(hold)}</div></div>
+    <div class="kpi amber"><h3>Pending —</h3><div class="val">${fmt1(pending)}<small>tons</small></div><div class="sub">${pct(pending)}</div></div>
+    <div class="kpi blue"><h3>LPNs on the Ground</h3><div class="val">${fmt0(lpns)}</div><div class="sub">unique license plates</div></div>
+  `;
+
+  // Stacked bar by zone × product
+  const zones = Array.from(new Set(STATE.inventory.map(r=>r.zone))).sort((a,b)=>{
+    const an=Number(a), bn=Number(b);
+    if(!isNaN(an)&&!isNaN(bn)) return an-bn;
+    if(!isNaN(an)) return -1;
+    if(!isNaN(bn)) return 1;
+    return a.localeCompare(b);
+  });
+  const prods = ['REBAR','HR-MBQ','EB-SBQ','BILLETS','OTHER'];
+  const byZP = {};
+  for(const r of inv){
+    byZP[r.zone] = byZP[r.zone] || {};
+    byZP[r.zone][r.product] = (byZP[r.zone][r.product]||0) + r.tons;
+  }
+  const datasets = prods.filter(p=>inv.some(r=>r.product===p)).map(p => ({
+    label: PRODUCT_LABEL[p],
+    backgroundColor: PRODUCT_COLORS[p],
+    data: zones.map(z => Math.round((byZP[z]?.[p]||0)*10)/10)
+  }));
+  makeChart('chartBay', {
+    type:'bar',
+    data:{ labels: zones.map(z=>isNaN(Number(z))?'Zone '+z:'Bay '+z), datasets },
+    options:{
+      responsive:true, maintainAspectRatio:false,
+      onClick:(e,els)=>{ if(els[0]){ setBay(zones[els[0].index]); } },
+      scales:{ x:{stacked:true}, y:{stacked:true,title:{display:true,text:'Tons'}} },
+      plugins:{ legend:{position:'bottom'} }
+    }
+  });
+
+  // Top items table
+  const itemAgg = {};
+  for(const r of inv){
+    if(!itemAgg[r.itemNum]) itemAgg[r.itemNum] = { itemNum:r.itemNum, desc:r.desc, tons:0, lpns:0, product:r.product };
+    itemAgg[r.itemNum].tons += r.tons;
+    itemAgg[r.itemNum].lpns += 1;
+  }
+  const top = Object.values(itemAgg).sort((a,b)=>b.tons-a.tons).slice(0,50);
+  document.getElementById('tblTopItems').innerHTML = `
+    <thead><tr><th>Item</th><th>Description</th><th>Product</th><th class="num">LPNs</th><th class="num">Tons</th></tr></thead>
+    <tbody>${top.map(r=>`<tr><td>${r.itemNum}</td><td>${esc(r.desc)}</td><td>${PRODUCT_LABEL[r.product]||r.product}</td><td class="num">${fmt0(r.lpns)}</td><td class="num">${fmt1(r.tons)}</td></tr>`).join('')}</tbody>
+  `;
+
+  // Status pie
+  makeChart('chartStatus', {
+    type:'doughnut',
+    data:{
+      labels:['Active','Hold','Pending'],
+      datasets:[{ data:[active,hold,pending], backgroundColor:[PRODUCT_COLORS.REBAR,'#c0392b','#d68910'] }]
+    },
+    options:{ responsive:true, maintainAspectRatio:false, plugins:{legend:{position:'bottom'}} }
+  });
+
+  renderSnapshot();
+  renderBayStrip();
+}
+
+/* =====================================================================
+ * Render: Aging
+ * ===================================================================*/
+const AGE_BUCKETS = [
+  { k:'Unassigned', test:a=>a==null, color:'#bdc3c7' },
+  { k:'1-29d', test:a=>a>=0 && a<30, color:'#27ae60' },
+  { k:'30-59d', test:a=>a>=30 && a<60, color:'#7cb342' },
+  { k:'60-89d', test:a=>a>=60 && a<90, color:'#d68910' },
+  { k:'90-179d', test:a=>a>=90 && a<180, color:'#e67e22' },
+  { k:'180-269d', test:a=>a>=180 && a<270, color:'#c0392b' },
+  { k:'270-359d', test:a=>a>=270 && a<360, color:'#a93226' },
+  { k:'≥360d', test:a=>a>=360, color:'#7b241c' }
+];
+function renderAging(){
+  const inv = applyInvFilters();
+  const t = today();
+  const buckets = AGE_BUCKETS.map(b => ({...b, tons:0, skus:new Set()}));
+  let totalTons=0, stagnant=0, fresh=0, hold=0;
+  const skuTotal = new Set(), skuStag = new Set(), skuFresh = new Set(), skuHold = new Set();
+  for(const r of inv){
+    const age = r.originDate ? daysBetween(t, r.originDate) : null;
+    totalTons += r.tons;
+    skuTotal.add(r.itemNum);
+    for(const b of buckets){ if(b.test(age)){ b.tons += r.tons; b.skus.add(r.itemNum); break; } }
+    if(age!=null && age>=30){ stagnant += r.tons; skuStag.add(r.itemNum); }
+    if(age!=null && age<30){ fresh += r.tons; skuFresh.add(r.itemNum); }
+    if(/hold/i.test(r.status)){ hold += r.tons; skuHold.add(r.itemNum); }
+  }
+  const stagPct = totalTons ? Math.round(stagnant/totalTons*100)+'%' : '—';
+  document.getElementById('ageKpis').innerHTML = `
+    <div class="kpi red"><h3>Total Inventory</h3><div class="val">${fmt0(totalTons)}<small>tons</small></div><div class="sub">${fmt0(skuTotal.size)} active SKUs</div></div>
+    <div class="kpi red"><h3>Stagnant Tons</h3><div class="val">${fmt0(stagnant)}<small>tons</small></div><div class="sub">${stagPct} of yard · ${fmt0(skuStag.size)} SKUs</div></div>
+    <div class="kpi green"><h3>Fresh Stock (1-29D)</h3><div class="val">${fmt0(fresh)}<small>tons</small></div><div class="sub">${fmt0(skuFresh.size)} SKUs</div></div>
+    <div class="kpi red"><h3>On Hold —</h3><div class="val">${fmt0(hold)}<small>tons</small></div><div class="sub">${fmt0(skuHold.size)} SKUs</div></div>
+  `;
+
+  makeChart('chartAge', {
+    type:'bar',
+    data:{ labels: buckets.map(b=>b.k), datasets:[{ label:'Tons', data:buckets.map(b=>Math.round(b.tons)), backgroundColor:buckets.map(b=>b.color) }]},
+    options:{ responsive:true, maintainAspectRatio:false, plugins:{legend:{display:false}}, scales:{y:{title:{display:true,text:'Tons'}}} }
+  });
+
+  // Stagnant table
+  const agg = {};
+  for(const r of inv){
+    const age = r.originDate ? daysBetween(t, r.originDate) : null;
+    if(age==null || age<30) continue;
+    if(!agg[r.itemNum]) agg[r.itemNum] = { itemNum:r.itemNum, desc:r.desc, tons:0, lpns:0, oldest:null, product:r.product };
+    agg[r.itemNum].tons += r.tons;
+    agg[r.itemNum].lpns += 1;
+    if(!agg[r.itemNum].oldest || r.originDate < agg[r.itemNum].oldest) agg[r.itemNum].oldest = r.originDate;
+  }
+  const list = Object.values(agg).sort((a,b)=>b.tons-a.tons).slice(0,100);
+  document.getElementById('tblStagnant').innerHTML = `
+    <thead><tr><th>Item</th><th>Description</th><th>Product</th><th class="num">LPNs</th><th class="num">Tons</th><th>Oldest</th><th class="num">Days</th></tr></thead>
+    <tbody>${list.map(r=>`<tr><td>${r.itemNum}</td><td>${esc(r.desc)}</td><td>${PRODUCT_LABEL[r.product]||r.product}</td><td class="num">${fmt0(r.lpns)}</td><td class="num">${fmt1(r.tons)}</td><td>${dstr(r.oldest)}</td><td class="num">${daysBetween(t, r.oldest)}</td></tr>`).join('')}</tbody>
+  `;
+}
+
+/* =====================================================================
+ * Render: Shipping
+ * ===================================================================*/
+function fiscalKey(d, range){
+  if(range==='day') return d.toISOString().slice(0,10);
+  if(range==='wk'){ const t=new Date(d); const day=t.getUTCDay(); const diff=(day===0?-6:1-day); t.setUTCDate(t.getUTCDate()+diff); return t.toISOString().slice(0,10); }
+  if(range==='mo') return d.toISOString().slice(0,7);
+}
+function renderShipping(){
+  const ship = applyShipFilters();
+  if(ship.length===0){
+    document.getElementById('shipForecast').innerHTML='';
+    document.getElementById('shipKpis').innerHTML = `<div class="kpi"><h3>No Data</h3><div class="val">—</div><div class="sub">Upload Shipments to populate.</div></div>`;
+    if(CHARTS.chartShip) CHARTS.chartShip.destroy();
+    document.getElementById('tblCustomers').innerHTML='';
+    document.getElementById('tblCarriers').innerHTML='';
+    return;
+  }
+  const totalTons = ship.reduce((a,r)=>a+r.tons,0);
+  const truck = ship.filter(r=>r.mode==='TRUCK');
+  const rail = ship.filter(r=>r.mode==='RAIL');
+  const truckTons = truck.reduce((a,r)=>a+r.tons,0);
+  const railTons = rail.reduce((a,r)=>a+r.tons,0);
+  const truckPct = totalTons?Math.round(truckTons/totalTons*100)+'%':'—';
+  const railPct = totalTons?Math.round(railTons/totalTons*100)+'%':'—';
+  const loads = new Set(ship.map(r=>r.trip || r.delivery)).size;
+  const lines = ship.length;
+
+  // Date range
+  const dates = ship.map(r=>r.date).filter(Boolean).sort((a,b)=>a-b);
+  const minD = dates[0], maxD = dates[dates.length-1];
+  const dayKeys = new Set(); ship.forEach(r=>dayKeys.add(r.date.toISOString().slice(0,10)));
+  const wkdays = new Set(); ship.forEach(r=>{ const d=r.date.getUTCDay(); if(d>=1&&d<=5) wkdays.add(r.date.toISOString().slice(0,10)); });
+  const wkKeys = new Set(); ship.forEach(r=>wkKeys.add(fiscalKey(r.date,'wk')));
+  const moKeys = new Set(); ship.forEach(r=>moKeys.add(fiscalKey(r.date,'mo')));
+  const avgWeekday = wkdays.size ? totalTons/wkdays.size : 0;
+  const avgWk = wkKeys.size ? totalTons/wkKeys.size : 0;
+  const avgMo = moKeys.size ? totalTons/moKeys.size : 0;
+
+  // Crude monthly forecast: avg daily × ~21 weekdays
+  const projMo = avgWeekday * 21;
+
+  document.getElementById('shipForecast').innerHTML = `
+    <div class="fcast"><div class="tag">FORECAST</div>
+      <div class="label">Range</div>
+      <div class="val">${fmt0(totalTons)}<small>tons shipped</small></div>
+      <div class="sub">${dstr(minD)} → ${dstr(maxD)} · ${fmt0(loads)} loads</div>
+    </div>
+    <div class="fcast"><div class="tag">RUN-RATE</div>
+      <div class="label">Avg Weekday</div>
+      <div class="val">${fmt0(avgWeekday)}<small>tons/day</small></div>
+      <div class="sub">${fmt0(wkdays.size)} Mon–Fri days observed</div>
+    </div>
+    <div class="fcast"><div class="tag">FORECAST</div>
+      <div class="label">Implied Monthly Pace</div>
+      <div class="val">${fmt0(projMo)}<small>tons / mo</small></div>
+      <div class="sub">avg weekday × 21 weekdays</div>
+    </div>`;
+
+  document.getElementById('shipKpis').innerHTML = `
+    <div class="kpi green"><h3>Total Shipped</h3><div class="val">${fmt0(totalTons)}<small>tons</small></div><div class="sub">${fmt0(loads)} loads · ${fmt0(lines)} lines</div></div>
+    <div class="kpi green"><h3>Avg / Weekday</h3><div class="val">${fmt0(avgWeekday)}<small>tons</small></div><div class="sub">Mon–Fri only</div></div>
+    <div class="kpi green"><h3>Avg / Fiscal Wk</h3><div class="val">${fmt0(avgWk)}<small>tons</small></div><div class="sub">${fmt0(wkKeys.size)} weeks</div></div>
+    <div class="kpi green"><h3>Avg / Fiscal Mo</h3><div class="val">${fmt0(avgMo)}<small>tons</small></div><div class="sub">${fmt0(moKeys.size)} months</div></div>
+    <div class="kpi amber"><h3>Truck</h3><div class="val">${fmt0(truckTons)}<small>tons</small></div><div class="sub">${fmt0(new Set(truck.map(r=>r.trip)).size)} loads · ${truckPct}</div></div>
+    <div class="kpi blue"><h3>Rail</h3><div class="val">${fmt0(railTons)}<small>tons</small></div><div class="sub">${fmt0(new Set(rail.map(r=>r.trip)).size)} loads · ${railPct}</div></div>
+  `;
+
+  // Daily/weekly/monthly chart
+  const range = STATE.filters.shipRange || 'day';
+  const tBy = {}, rBy = {};
+  for(const r of ship){
+    const k = fiscalKey(r.date, range);
+    if(r.mode==='TRUCK') tBy[k] = (tBy[k]||0) + r.tons;
+    else rBy[k] = (rBy[k]||0) + r.tons;
+  }
+  const labels = Array.from(new Set([...Object.keys(tBy),...Object.keys(rBy)])).sort();
+  makeChart('chartShip', {
+    type:'bar',
+    data:{ labels, datasets:[
+      { label:'Truck', data:labels.map(k=>Math.round(tBy[k]||0)), backgroundColor:'#d68910' },
+      { label:'Rail', data:labels.map(k=>Math.round(rBy[k]||0)), backgroundColor:'#2874a6' }
+    ]},
+    options:{ responsive:true, maintainAspectRatio:false, plugins:{legend:{position:'bottom'}}, scales:{x:{stacked:true},y:{stacked:true,title:{display:true,text:'Tons'}}} }
+  });
+
+  // Customers
+  const custAgg = {};
+  for(const r of ship){ if(!r.customer) continue; (custAgg[r.customer] = custAgg[r.customer] || {tons:0,loads:new Set()}); custAgg[r.customer].tons += r.tons; custAgg[r.customer].loads.add(r.trip); }
+  const cust = Object.entries(custAgg).map(([k,v])=>({k,tons:v.tons,loads:v.loads.size})).sort((a,b)=>b.tons-a.tons).slice(0,50);
+  document.getElementById('tblCustomers').innerHTML = `<thead><tr><th>Customer</th><th class="num">Loads</th><th class="num">Tons</th></tr></thead><tbody>${cust.map(r=>`<tr><td>${esc(r.k)}</td><td class="num">${fmt0(r.loads)}</td><td class="num">${fmt1(r.tons)}</td></tr>`).join('')}</tbody>`;
+
+  // Carriers
+  const carAgg = {};
+  for(const r of ship){ if(!r.carrier) continue; (carAgg[r.carrier] = carAgg[r.carrier] || {tons:0,loads:new Set()}); carAgg[r.carrier].tons += r.tons; carAgg[r.carrier].loads.add(r.trip); }
+  const car = Object.entries(carAgg).map(([k,v])=>({k,tons:v.tons,loads:v.loads.size})).sort((a,b)=>b.loads-a.loads).slice(0,50);
+  document.getElementById('tblCarriers').innerHTML = `<thead><tr><th>Carrier</th><th class="num">Loads</th><th class="num">Tons</th></tr></thead><tbody>${car.map(r=>`<tr><td>${esc(r.k)}</td><td class="num">${fmt0(r.loads)}</td><td class="num">${fmt1(r.tons)}</td></tr>`).join('')}</tbody>`;
+}
+
+/* =====================================================================
+ * Render: Production
+ * ===================================================================*/
+function renderProduction(){
+  const prod = applyProdFilters();
+  document.getElementById('prodEmpty').style.display = prod.length ? 'none' : 'block';
+  document.getElementById('prodContent').style.display = prod.length ? 'block' : 'none';
+  if(!prod.length) return;
+  const totalTons = prod.reduce((a,r)=>a+r.tons,0);
+  const days = new Set(prod.map(r=>r.date.toISOString().slice(0,10))); const avgDay = days.size?totalTons/days.size:0;
+  const heats = new Set(prod.map(r=>r.heat).filter(Boolean)).size;
+  document.getElementById('prodKpis').innerHTML = `
+    <div class="kpi green"><h3>Total Produced</h3><div class="val">${fmt0(totalTons)}<small>tons</small></div><div class="sub">${days.size} run days</div></div>
+    <div class="kpi green"><h3>Avg / Day</h3><div class="val">${fmt0(avgDay)}<small>tons</small></div><div class="sub">across observed days</div></div>
+    <div class="kpi blue"><h3>Heats</h3><div class="val">${fmt0(heats)}</div><div class="sub">unique heat numbers</div></div>
+    <div class="kpi green"><h3>Lines</h3><div class="val">${fmt0(new Set(prod.map(r=>r.line).filter(Boolean)).size)}</div><div class="sub">distinct mill/lines</div></div>
+  `;
+  // Daily by product
+  const byDP = {};
+  for(const r of prod){ const k = r.date.toISOString().slice(0,10); byDP[k] = byDP[k]||{}; byDP[k][r.product] = (byDP[k][r.product]||0)+r.tons; }
+  const labels = Object.keys(byDP).sort();
+  const prods = ['REBAR','HR-MBQ','EB-SBQ','BILLETS','OTHER'].filter(p => prod.some(r=>r.product===p));
+  makeChart('chartProd', {
+    type:'bar',
+    data:{ labels, datasets: prods.map(p=>({label:PRODUCT_LABEL[p],backgroundColor:PRODUCT_COLORS[p],data:labels.map(k=>Math.round(byDP[k]?.[p]||0))})) },
+    options:{ responsive:true, maintainAspectRatio:false, plugins:{legend:{position:'bottom'}}, scales:{x:{stacked:true},y:{stacked:true,title:{display:true,text:'Tons'}}} }
+  });
+  // Mix donut
+  const mix = {};
+  for(const r of prod) mix[r.product] = (mix[r.product]||0) + r.tons;
+  const mLabels = Object.keys(mix);
+  makeChart('chartProdMix', {
+    type:'doughnut',
+    data:{ labels:mLabels.map(p=>PRODUCT_LABEL[p]||p), datasets:[{data:mLabels.map(p=>Math.round(mix[p])), backgroundColor:mLabels.map(p=>PRODUCT_COLORS[p]||'#7f8c8d')}]},
+    options:{ responsive:true, maintainAspectRatio:false, plugins:{legend:{position:'bottom'}} }
+  });
+  // Items table
+  const itAgg = {};
+  for(const r of prod){ const k = r.desc || r.heat; if(!k) continue; itAgg[k] = itAgg[k] || {desc:k, product:r.product, tons:0, runs:0}; itAgg[k].tons+=r.tons; itAgg[k].runs+=1; }
+  const top = Object.values(itAgg).sort((a,b)=>b.tons-a.tons).slice(0,50);
+  document.getElementById('tblProdItems').innerHTML = `<thead><tr><th>Item / Heat</th><th>Product</th><th class="num">Runs</th><th class="num">Tons</th></tr></thead><tbody>${top.map(r=>`<tr><td>${esc(r.desc)}</td><td>${PRODUCT_LABEL[r.product]||r.product}</td><td class="num">${fmt0(r.runs)}</td><td class="num">${fmt1(r.tons)}</td></tr>`).join('')}</tbody>`;
+}
+
+/* =====================================================================
+ * Render: Inv vs Production
+ * ===================================================================*/
+function renderVs(){
+  const prod = applyProdFilters();
+  const ship = applyShipFilters();
+  const inv = applyInvFilters();
+  const onHand = inv.reduce((a,r)=>a+r.tons,0);
+  const prodTotal = prod.reduce((a,r)=>a+r.tons,0);
+  const shipTotal = ship.reduce((a,r)=>a+r.tons,0);
+
+  // Average daily ship → days of supply
+  const shipDays = new Set(ship.map(r=>r.date.toISOString().slice(0,10))).size;
+  const avgShipDay = shipDays ? shipTotal/shipDays : 0;
+  const dos = avgShipDay ? onHand/avgShipDay : null;
+  const buildShip = shipTotal ? prodTotal/shipTotal : null;
+  document.getElementById('vsKpis').innerHTML = `
+    <div class="kpi green"><h3>On-Hand</h3><div class="val">${fmt0(onHand)}<small>tons</small></div><div class="sub">latest snapshot</div></div>
+    <div class="kpi blue"><h3>Produced (range)</h3><div class="val">${fmt0(prodTotal)}<small>tons</small></div><div class="sub">${prod.length?'observed':'no data'}</div></div>
+    <div class="kpi amber"><h3>Shipped (range)</h3><div class="val">${fmt0(shipTotal)}<small>tons</small></div><div class="sub">${shipDays} days</div></div>
+    <div class="kpi ${dos==null?'':(dos>30?'red':dos<7?'amber':'green')}"><h3>Days of Supply</h3><div class="val">${dos==null?'—':fmt1(dos)}<small>days</small></div><div class="sub">on-hand ÷ avg ship/day</div></div>
+    <div class="kpi ${buildShip==null?'':(buildShip>1.05?'amber':buildShip<0.95?'red':'green')}"><h3>Build : Ship</h3><div class="val">${buildShip==null?'—':buildShip.toFixed(2)}</div><div class="sub">>1 building ahead</div></div>
+  `;
+
+  // Daily built vs shipped
+  const map = {};
+  for(const r of prod){ const k = r.date.toISOString().slice(0,10); map[k] = map[k]||{p:0,s:0}; map[k].p += r.tons; }
+  for(const r of ship){ const k = r.date.toISOString().slice(0,10); map[k] = map[k]||{p:0,s:0}; map[k].s += r.tons; }
+  const labels = Object.keys(map).sort();
+  makeChart('chartBvS', {
+    type:'line',
+    data:{ labels, datasets:[
+      { label:'Produced', data:labels.map(k=>Math.round(map[k].p)), borderColor:PRODUCT_COLORS.REBAR, backgroundColor:'rgba(0,107,63,.15)', fill:false, tension:.2 },
+      { label:'Shipped', data:labels.map(k=>Math.round(map[k].s)), borderColor:'#d68910', backgroundColor:'rgba(214,137,16,.15)', fill:false, tension:.2 }
+    ]},
+    options:{ responsive:true, maintainAspectRatio:false, plugins:{legend:{position:'bottom'}}, scales:{y:{title:{display:true,text:'Tons'}}} }
+  });
+
+  // DOS by product table
+  const prods = ['REBAR','HR-MBQ','EB-SBQ','BILLETS','OTHER'];
+  const rows = prods.map(p => {
+    const oh = inv.filter(r=>r.product===p).reduce((a,r)=>a+r.tons,0);
+    const sp = ship.filter(r=>r.product===p);
+    const sd = new Set(sp.map(r=>r.date.toISOString().slice(0,10))).size;
+    const st = sp.reduce((a,r)=>a+r.tons,0);
+    const av = sd ? st/sd : 0;
+    const d = av ? oh/av : null;
+    const pt = prod.filter(r=>r.product===p).reduce((a,r)=>a+r.tons,0);
+    const bs = st ? pt/st : null;
+    return { p, oh, st, pt, av, d, bs };
+  }).filter(r=>r.oh>0 || r.st>0 || r.pt>0);
+  document.getElementById('tblDOS').innerHTML = `<thead><tr><th>Product</th><th class="num">On-Hand (tons)</th><th class="num">Produced</th><th class="num">Shipped</th><th class="num">Avg Ship/Day</th><th class="num">DOS</th><th class="num">Build:Ship</th></tr></thead><tbody>${rows.map(r=>`<tr><td>${PRODUCT_LABEL[r.p]||r.p}</td><td class="num">${fmt1(r.oh)}</td><td class="num">${fmt1(r.pt)}</td><td class="num">${fmt1(r.st)}</td><td class="num">${fmt1(r.av)}</td><td class="num">${r.d==null?'—':fmt1(r.d)}</td><td class="num">${r.bs==null?'—':r.bs.toFixed(2)}</td></tr>`).join('')}</tbody>`;
+}
+
+/* =====================================================================
+ * Snapshot/header info
+ * ===================================================================*/
+function renderSnapshot(){
+  const inv = applyInvFilters();
+  if(STATE.inventory.length === 0){ document.getElementById('snapshot').style.display='none'; return; }
+  const dates = STATE.inventory.map(r=>r.originDate).filter(Boolean).sort((a,b)=>b-a);
+  const latest = dates[0];
+  const lpns = new Set(STATE.inventory.map(r=>r.lpn)).size;
+  const tStr = today().toISOString().slice(0,10);
+  const el = document.getElementById('snapshot');
+  el.style.display='block';
+  el.innerHTML = `<b>Snapshot loaded</b> ${dstr(latest)||'—'} · ${fmt0(lpns)} LPNs · Age calculated as of today (${tStr})`;
+  // Filter summary
+  const items = new Set(inv.map(r=>r.itemNum)).size;
+  const tons = inv.reduce((a,r)=>a+r.tons,0);
+  document.getElementById('filterSummary').innerHTML = `<b>${fmt0(items)}</b> items · <b>${fmt0(tons)}</b> tons`;
+}
+function renderBayStrip(){
+  const strip = document.getElementById('bayStrip');
+  const view = currentView();
+  strip.style.display = view==='inv' ? 'flex' : 'none';
+  if(view!=='inv') return;
+  const zones = Array.from(new Set(STATE.inventory.map(r=>r.zone))).sort((a,b)=>{
+    const an=Number(a), bn=Number(b);
+    if(!isNaN(an)&&!isNaN(bn)) return an-bn;
+    if(!isNaN(an)) return -1;
+    if(!isNaN(bn)) return 1;
+    return a.localeCompare(b);
+  });
+  const html = ['<span class="label">Bay / Zone:</span>',
+    `<button class="chip ${STATE.filters.bay==='ALL'?'active':''}" data-bay="ALL">All Bays &amp; Zones</button>`,
+    ...zones.map(z=>`<button class="chip ${STATE.filters.bay===z?'active':''}" data-bay="${esc(z)}">${isNaN(Number(z))?'Zone '+z:'Bay '+z}</button>`)
+  ];
+  strip.innerHTML = html.join('');
+  strip.querySelectorAll('.chip').forEach(c => c.addEventListener('click', () => setBay(c.dataset.bay)));
+}
+
+function setBay(b){
+  STATE.filters.bay = (STATE.filters.bay===b && b!=='ALL') ? 'ALL' : b;
+  saveState(); renderAll();
+}
+
+function renderHeaderMeta(){
+  const inv = STATE.inventory; const sh = STATE.shipments; const pr = STATE.production;
+  const parts = [];
+  if(inv.length){
+    const dates = inv.map(r=>r.originDate).filter(Boolean).sort((a,b)=>b-a);
+    parts.push(`<b>INV:</b> ${dstr(dates[0])||'—'}`);
+  }
+  if(sh.length){
+    const ds = sh.map(r=>r.date).filter(Boolean).sort((a,b)=>a-b);
+    parts.push(`<b>SHIP:</b> ${dstr(ds[0])}–${dstr(ds[ds.length-1])}`);
+  }
+  if(pr.length){
+    const dp = pr.map(r=>r.date).filter(Boolean).sort((a,b)=>a-b);
+    parts.push(`<b>PROD:</b> ${dstr(dp[0])}–${dstr(dp[dp.length-1])}`);
+  }
+  parts.push(`<b>LINES:</b> ${fmt0(inv.length+sh.length+pr.length)}`);
+  document.getElementById('metaLine').innerHTML = parts.length>1 ? parts.join(' · ') : 'No data loaded — use the upload buttons to begin.';
+}
+
+/* =====================================================================
+ * Tabs / wiring
+ * ===================================================================*/
+function currentView(){ const t = document.querySelector('.tab.active'); return t?t.dataset.view:'inv'; }
+function setView(v){
+  document.querySelectorAll('.tab').forEach(t => t.classList.toggle('active', t.dataset.view===v));
+  document.querySelectorAll('.view').forEach(s => s.classList.toggle('active', s.id==='view-'+v));
+  // Show/hide filter strip on relevant tabs
+  document.getElementById('filterStrip').style.display = (v==='ship'?'flex':'flex');
+  renderAll();
+}
+
+function renderAll(){
+  renderHeaderMeta();
+  renderInventory();
+  renderAging();
+  renderShipping();
+  renderProduction();
+  renderVs();
+  renderSnapshot();
+  renderBayStrip();
+}
+
+function esc(s){ return String(s==null?'':s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+
+/* =====================================================================
+ * Event wiring
+ * ===================================================================*/
+document.querySelectorAll('.tabs .tab').forEach(t => t.addEventListener('click', () => setView(t.dataset.view)));
+
+document.querySelectorAll('#filterStrip .chip[data-prod]').forEach(c => c.addEventListener('click', () => {
+  STATE.filters.product = c.dataset.prod;
+  document.querySelectorAll('#filterStrip .chip[data-prod]').forEach(x => x.classList.toggle('active', x.dataset.prod===STATE.filters.product));
+  saveState(); renderAll();
+}));
+document.getElementById('includeHold').addEventListener('change', e => { STATE.filters.includeHold = e.target.checked; saveState(); renderAll(); });
+
+document.getElementById('shipChartToggle').addEventListener('click', e => {
+  if(e.target.matches('.chip')){
+    STATE.filters.shipRange = e.target.dataset.rng;
+    document.querySelectorAll('#shipChartToggle .chip').forEach(c=>c.classList.toggle('active', c===e.target));
+    saveState(); renderShipping();
+  }
+});
+
+async function handleUpload(file, kind){
+  if(!file) return;
+  clearBanner();
+  banner('Reading '+file.name+' …');
+  try{
+    const wb = await readWorkbook(file);
+    const ws = wb.Sheets[wb.SheetNames[0]];
+    const rows = XLSX.utils.sheet_to_json(ws, { header:1, raw:false, defval:null, blankrows:false });
+    let parsed;
+    if(kind==='inv') parsed = parseInventory(rows);
+    else if(kind==='ship') parsed = parseShipments(rows);
+    else parsed = parseProduction(rows);
+    if(!parsed.length){ banner('No rows parsed from '+file.name+'. Check that the file has the expected columns.','warn'); return; }
+    if(kind==='inv') STATE.inventory = parsed;
+    else if(kind==='ship') STATE.shipments = parsed;
+    else STATE.production = parsed;
+    saveState();
+    banner(`Loaded ${fmt0(parsed.length)} ${kind} rows from ${file.name}.`);
+    setTimeout(clearBanner, 4000);
+    renderAll();
+  }catch(e){
+    console.error(e);
+    banner('Failed to parse '+file.name+': '+e.message, 'err');
+  }
+}
+document.getElementById('fileInv').addEventListener('change', e => handleUpload(e.target.files[0],'inv'));
+document.getElementById('fileShip').addEventListener('change', e => handleUpload(e.target.files[0],'ship'));
+document.getElementById('fileProd').addEventListener('change', e => handleUpload(e.target.files[0],'prod'));
+
+document.getElementById('btnBackup').addEventListener('click', () => {
+  const blob = new Blob([JSON.stringify(STATE)], {type:'application/json'});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a'); a.href = url; a.download = 'pcd-backup-'+today().toISOString().slice(0,10)+'.json'; a.click();
+  URL.revokeObjectURL(url);
+});
+document.getElementById('fileRestore').addEventListener('change', e => {
+  const f = e.target.files[0]; if(!f) return;
+  const r = new FileReader();
+  r.onload = ev => {
+    try{
+      const s = JSON.parse(ev.target.result);
+      Object.assign(STATE, s);
+      STATE.inventory = (s.inventory||[]).map(r => ({...r, originDate: r.originDate?new Date(r.originDate):null}));
+      STATE.shipments = (s.shipments||[]).map(r => ({...r, date: r.date?new Date(r.date):null}));
+      STATE.production = (s.production||[]).map(r => ({...r, date: r.date?new Date(r.date):null}));
+      saveState();
+      banner('Restored: '+fmt0(STATE.inventory.length)+' inventory · '+fmt0(STATE.shipments.length)+' shipment lines · '+fmt0(STATE.production.length)+' production rows');
+      renderAll();
+    }catch(err){ banner('Restore failed: '+err.message,'err'); }
+  };
+  r.readAsText(f);
+});
+document.getElementById('btnClear').addEventListener('click', () => {
+  if(!confirm('Clear all loaded data from this browser?')) return;
+  STATE.inventory = []; STATE.shipments = []; STATE.production = [];
+  saveState(); banner('Cleared.'); setTimeout(clearBanner,2000); renderAll();
+});
+document.getElementById('btnExport').addEventListener('click', () => {
+  const view = currentView();
+  let rows = [], name = 'export';
+  if(view==='inv' || view==='aging'){ rows = applyInvFilters(); name='inventory'; }
+  else if(view==='ship'){ rows = applyShipFilters(); name='shipments'; }
+  else if(view==='prod'){ rows = applyProdFilters(); name='production'; }
+  else { rows = applyInvFilters(); name='inventory'; }
+  if(!rows.length){ banner('Nothing to export on this view.','warn'); return; }
+  const ws = XLSX.utils.json_to_sheet(rows.map(r=>{ const o={...r}; for(const k in o) if(o[k] instanceof Date) o[k] = dstr(o[k]); return o; }));
+  const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, name);
+  XLSX.writeFile(wb, name+'-'+today().toISOString().slice(0,10)+'.csv', { bookType:'csv' });
+});
+
+/* Initial */
+loadState();
+renderAll();
+if(STATE.inventory.length || STATE.shipments.length || STATE.production.length){
+  banner('Restored: '+fmt0(STATE.inventory.length)+' inventory · '+fmt0(STATE.shipments.length)+' shipment lines · '+fmt0(STATE.production.length)+' production rows');
+  setTimeout(clearBanner, 4000);
+}
+</script>
+</body>
+</html>
