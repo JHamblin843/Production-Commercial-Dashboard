@@ -459,13 +459,10 @@ const today = () => { const t = new Date(); t.setHours(0,0,0,0); return t; };
 const daysBetween = (a,b) => Math.floor((a-b)/86400000);
 function mmToFtIn(mm){
   if(mm==null || isNaN(mm) || mm===0) return '—';
-  const totalIn = mm/25.4;
+  const totalIn = Math.round(mm/25.4);
   const ft = Math.floor(totalIn/12);
   const inches = totalIn - ft*12;
-  const inRound = Math.round(inches*10)/10;
-  if(inRound === 0) return ft+"' 0\"";
-  if(Math.abs(inRound - 12) < 0.05) return (ft+1)+"' 0\"";
-  return ft+"' "+(inRound % 1 === 0 ? inRound.toFixed(0) : inRound.toFixed(1))+'"';
+  return ft+"' "+inches+'"';
 }
 
 function classifyProduct(text){
