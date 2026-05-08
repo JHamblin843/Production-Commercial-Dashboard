@@ -240,24 +240,32 @@
 <section class="view" id="view-prod">
   <div id="prodEmpty" class="empty">
     <h2>No production data loaded yet</h2>
-    <p>Upload a production export to see daily output, mix, and run tracking.</p>
-    <p style="font-size:12px">Expected fields: <b>date, product, item, tons, line/shift, heat (optional)</b>. The dashboard auto-detects column names.</p>
+    <p>Upload the NSTX History &amp; Forecast export (rolling weekly forecast by product family) or any production-runs file.</p>
+    <p style="font-size:12px">NSTX columns expected: <b>Product Family, Time / Series, Final Sales History, Final Production Forecast, Booked Sales Orders, Week</b>.</p>
   </div>
   <div id="prodContent" style="display:none">
     <div class="kpis" id="prodKpis"></div>
     <div class="card">
-      <div class="head">Daily Production — Tons by Product</div>
+      <div class="head">Weekly Sales History &amp; Production Forecast — Tons<span class="right" id="prodChartToggle">
+        <button class="chip active" data-prng="all">All</button>
+        <button class="chip" data-prng="hist">History</button>
+        <button class="chip" data-prng="fc">Forecast</button>
+      </span></div>
       <div class="body"><div class="chart-wrap tall"><canvas id="chartProd"></canvas></div></div>
     </div>
     <div class="split">
       <div class="card">
-        <div class="head">Production Mix</div>
+        <div class="head">Forecast Mix by Product</div>
         <div class="body"><div class="chart-wrap" style="height:300px"><canvas id="chartProdMix"></canvas></div></div>
       </div>
       <div class="card">
-        <div class="head">Top Items Produced</div>
+        <div class="head">Top Product Families</div>
         <div class="body" style="max-height:380px;overflow:auto"><table id="tblProdItems"></table></div>
       </div>
+    </div>
+    <div class="card">
+      <div class="head">Rolling Weekly Production Forecast (next 12 weeks)<span class="right">By product family · tons</span></div>
+      <div class="body" style="overflow:auto"><table id="tblRolling"></table></div>
     </div>
   </div>
 </section>
@@ -352,6 +360,18 @@ function classifyProduct(text){
   if(t.includes('BILLET')) return 'BILLETS';
   return 'OTHER';
 }
+/* Map NSTX product family ("PF - CH3", "PF - RESLG", "PF - BI6-1/4") to
+   our coarse buckets so production rolls up alongside inventory + shipments. */
+function classifyFamily(family){
+  if(!family) return 'OTHER';
+  const f = String(family).toUpperCase().replace(/^PF\s*-\s*/,'').trim();
+  if(f.startsWith('BI')) return 'BILLETS';
+  if(f.startsWith('RES')) return 'REBAR';
+  if(f.startsWith('RD')) return 'EB-SBQ';
+  if(f.startsWith('CH') || f.startsWith('EA') || f.startsWith('UA') ||
+     f.startsWith('FL') || f.startsWith('SPECIAL')) return 'HR-MBQ';
+  return 'OTHER';
+}
 const PRODUCT_COLORS = { REBAR:'#006b3f', 'HR-MBQ':'#d68910', 'EB-SBQ':'#7d3c98', BILLETS:'#2874a6', OTHER:'#7f8c8d' };
 const PRODUCT_LABEL = { REBAR:'Rebar', 'HR-MBQ':'MBQ', 'EB-SBQ':'EB (SBQ)', BILLETS:'Billets', OTHER:'Other' };
 
@@ -386,6 +406,45 @@ function readWorkbook(file){
     r.onerror = () => rej(r.error);
     r.readAsArrayBuffer(file);
   });
+}
+
+/* Some "xls" files (e.g. NSTX History & Forecast export) are actually
+   UTF-16 LE tab-separated text. Detect via BOM and parse manually. */
+function readMaybeUtf16Tsv(file){
+  return new Promise((res,rej)=>{
+    const r = new FileReader();
+    r.onload = e => {
+      try{
+        const buf = e.target.result;
+        const u8 = new Uint8Array(buf);
+        let text = null;
+        if(u8.length >= 2 && u8[0] === 0xFF && u8[1] === 0xFE){
+          text = new TextDecoder('utf-16le').decode(buf);
+        } else if(u8.length >= 2 && u8[0] === 0xFE && u8[1] === 0xFF){
+          text = new TextDecoder('utf-16be').decode(buf);
+        }
+        // Note: we deliberately don't sniff non-BOM files as TSV — real
+        // .xlsx (PK..) and .xls (D0CF11E0..) binaries are handled by SheetJS.
+        if(text == null){ res(null); return; }
+        if(text.charCodeAt(0) === 0xFEFF) text = text.slice(1);
+        const rows = text.split(/\r?\n/).filter(l => l.length).map(splitTsvLine);
+        res(rows);
+      }catch(err){ rej(err); }
+    };
+    r.onerror = () => rej(r.error);
+    r.readAsArrayBuffer(file);
+  });
+}
+function splitTsvLine(line){
+  const out = []; let cur = '', q = false;
+  for(let i=0;i<line.length;i++){
+    const c = line[i];
+    if(c === '"'){ q = !q; continue; }
+    if(c === '\t' && !q){ out.push(cur); cur = ''; continue; }
+    cur += c;
+  }
+  out.push(cur);
+  return out;
 }
 
 /* Find header row by looking for a row with the most known header tokens */
@@ -478,10 +537,14 @@ function parseShipments(rows){
 }
 
 function parseProduction(rows){
-  // Auto-detect: find header row that has at least date + tons-ish fields
+  // First detect the NSTX History & Forecast file (weekly rolled forecast/history)
+  const headers0 = (rows[0]||[]).map(h => h==null?'':String(h).trim());
+  if(headers0.includes('Product Family') && headers0.some(h=>/Final Production Forecast/i.test(h))){
+    return parseNSTXForecast(rows);
+  }
+  // Otherwise auto-detect a generic production-runs file
   const hi = findHeaderRow(rows, ['date','tons','product','item','heat','line','shift']);
   const { headers, rows: objs } = rowsAsObjects(rows, hi);
-  // Pick best column names
   const find = (...keys) => {
     const lc = headers.map(h => (h||'').toLowerCase());
     for(const k of keys){ const i = lc.findIndex(h => h.includes(k)); if(i>=0) return headers[i]; }
@@ -501,13 +564,72 @@ function parseProduction(rows){
     let tons = cTons ? Number(o[cTons])||0 : 0;
     if(cTons && /lb/i.test(cTons)) tons = tons/2000;
     out.push({
-      date,
+      kind:'run', date,
       product: classifyProduct((cProd?o[cProd]:null) || (cItem?o[cItem]:null)),
       desc: cItem?String(o[cItem]||''):'',
       heat: cHeat?String(o[cHeat]||''):'',
       line: cLine?String(o[cLine]||''):'',
       shift: cShift?String(o[cShift]||''):'',
       tons
+    });
+  }
+  return out;
+}
+
+/* Parses NSTX "History and Forecast" file: weekly rolled product-family
+   numbers covering past sales history + future production forecast. */
+function parseNSTXForecast(rows){
+  const headers = rows[0].map(h => h==null?'':String(h).trim());
+  const idx = name => headers.indexOf(name);
+  const num = v => {
+    if(v==null || v==='') return 0;
+    const s = String(v).replace(/[",]/g,'').replace(/%$/,'');
+    const n = Number(s);
+    return isNaN(n) ? 0 : n;
+  };
+  const i_family = idx('Product Family');
+  const i_time = idx('Time / Series');
+  const i_week = idx('Week');
+  const i_hist = idx('Final Sales History');
+  const i_origFc = idx('Original Sales Forecast');
+  const i_ovrFc = idx('Sales Forecast Override');
+  const i_prodFc = idx('Final Production Forecast');
+  const i_aggFc = idx('Aggregated Prod Forecast');
+  const i_book = idx('Booked Sales Orders');
+  const i_aggBook = idx('Aggregated Booked Sales Orders');
+  const i_cycle = idx('Production Cycle');
+  const t = today();
+  const out = [];
+  for(let r=1;r<rows.length;r++){
+    const row = rows[r] || [];
+    if(!row.length) continue;
+    const fam = row[i_family];
+    const ts = row[i_time];
+    if(!fam || !ts) continue;
+    if(String(ts).trim().toLowerCase() === 'summary') continue;
+    const date = xlDate(ts);
+    if(!date) continue;
+    const hist = num(row[i_hist]);
+    const prodFc = num(row[i_prodFc]);
+    const salesFc = num(row[i_ovrFc]) || num(row[i_origFc]);
+    const booked = num(row[i_book]);
+    out.push({
+      kind:'forecast',
+      date,
+      week: row[i_week]?String(row[i_week]):'',
+      family: String(fam),
+      product: classifyFamily(fam),
+      cycle: row[i_cycle]?String(row[i_cycle]):'',
+      salesHistory: hist,
+      salesForecast: salesFc,
+      origForecast: num(row[i_origFc]),
+      prodForecast: prodFc,
+      aggForecast: num(row[i_aggFc]),
+      bookedSO: booked,
+      aggBooked: num(row[i_aggBook]),
+      isHistory: date < t,
+      // .tons drives existing filters/exports — use whichever value is meaningful for the row
+      tons: hist || prodFc
     });
   }
   return out;
@@ -796,8 +918,117 @@ function renderProduction(){
   document.getElementById('prodEmpty').style.display = prod.length ? 'none' : 'block';
   document.getElementById('prodContent').style.display = prod.length ? 'block' : 'none';
   if(!prod.length) return;
+
+  const isFc = prod[0].kind === 'forecast';
+  const t = today();
+
+  if(isFc){
+    // NSTX-style forecast file: weekly history + forward production forecast per family
+    const histTons = prod.filter(r=>r.isHistory).reduce((a,r)=>a+r.salesHistory,0);
+    const fcTons = prod.filter(r=>!r.isHistory).reduce((a,r)=>a+r.prodForecast,0);
+    const bookedAll = prod.reduce((a,r)=>a+r.bookedSO,0);
+    const families = new Set(prod.map(r=>r.family));
+    const histWeeks = new Set(prod.filter(r=>r.isHistory && r.salesHistory>0).map(r=>r.date.toISOString().slice(0,10)));
+    const fcWeeks = new Set(prod.filter(r=>!r.isHistory && r.prodForecast>0).map(r=>r.date.toISOString().slice(0,10)));
+    const avgWeekFc = fcWeeks.size ? fcTons/fcWeeks.size : 0;
+    const coverage = fcTons ? Math.round(bookedAll/fcTons*100) : null;
+
+    document.getElementById('prodKpis').innerHTML = `
+      <div class="kpi green"><h3>Sales History</h3><div class="val">${fmt0(histTons)}<small>tons</small></div><div class="sub">${histWeeks.size} historical weeks</div></div>
+      <div class="kpi blue"><h3>Production Forecast</h3><div class="val">${fmt0(fcTons)}<small>tons</small></div><div class="sub">${fcWeeks.size} forward weeks</div></div>
+      <div class="kpi green"><h3>Avg Week (Forecast)</h3><div class="val">${fmt0(avgWeekFc)}<small>tons</small></div><div class="sub">across forecast horizon</div></div>
+      <div class="kpi amber"><h3>Booked Sales Orders</h3><div class="val">${fmt0(bookedAll)}<small>tons</small></div><div class="sub">${coverage==null?'—':coverage+'% of forecast'}</div></div>
+      <div class="kpi blue"><h3>Product Families</h3><div class="val">${fmt0(families.size)}</div><div class="sub">in forecast file</div></div>
+    `;
+
+    // Weekly chart: history (Final Sales History) vs forecast (Final Production Forecast), filtered by toggle
+    const view = STATE.filters.prodRange || 'all';
+    const byWk = {};
+    for(const r of prod){
+      const k = r.date.toISOString().slice(0,10);
+      byWk[k] = byWk[k] || { hist:{}, fc:{} };
+      if(r.isHistory && r.salesHistory>0) byWk[k].hist[r.product] = (byWk[k].hist[r.product]||0) + r.salesHistory;
+      if(!r.isHistory && r.prodForecast>0) byWk[k].fc[r.product] = (byWk[k].fc[r.product]||0) + r.prodForecast;
+    }
+    const labels = Object.keys(byWk).sort();
+    const showHist = view==='all' || view==='hist';
+    const showFc = view==='all' || view==='fc';
+    const prods = ['REBAR','HR-MBQ','EB-SBQ','BILLETS','OTHER'].filter(p=>prod.some(r=>r.product===p));
+    const datasets = [];
+    if(showHist){
+      datasets.push(...prods.map(p => ({
+        label: 'History — '+PRODUCT_LABEL[p], stack:'hist',
+        backgroundColor: PRODUCT_COLORS[p],
+        data: labels.map(k => Math.round(byWk[k].hist[p]||0))
+      })));
+    }
+    if(showFc){
+      datasets.push(...prods.map(p => ({
+        label: 'Forecast — '+PRODUCT_LABEL[p], stack:'fc',
+        backgroundColor: PRODUCT_COLORS[p],
+        borderColor: '#ffffff', borderWidth: 1,
+        data: labels.map(k => Math.round(byWk[k].fc[p]||0))
+      })));
+    }
+    makeChart('chartProd', {
+      type:'bar',
+      data:{ labels, datasets },
+      options:{
+        responsive:true, maintainAspectRatio:false,
+        plugins:{ legend:{position:'bottom', labels:{boxWidth:12}} },
+        scales:{ x:{stacked:true}, y:{stacked:true, title:{display:true,text:'Tons'}} }
+      }
+    });
+
+    // Forecast mix donut (forward only)
+    const mix = {};
+    for(const r of prod){ if(!r.isHistory && r.prodForecast>0) mix[r.product] = (mix[r.product]||0) + r.prodForecast; }
+    const mLabels = Object.keys(mix);
+    makeChart('chartProdMix', {
+      type:'doughnut',
+      data:{ labels:mLabels.map(p=>PRODUCT_LABEL[p]||p), datasets:[{data:mLabels.map(p=>Math.round(mix[p])), backgroundColor:mLabels.map(p=>PRODUCT_COLORS[p]||'#7f8c8d')}]},
+      options:{ responsive:true, maintainAspectRatio:false, plugins:{legend:{position:'bottom'}} }
+    });
+
+    // Top families table (forecast tons)
+    const famAgg = {};
+    for(const r of prod){
+      famAgg[r.family] = famAgg[r.family] || {family:r.family, product:r.product, hist:0, fc:0, booked:0};
+      famAgg[r.family].hist += r.salesHistory;
+      famAgg[r.family].fc += r.prodForecast;
+      famAgg[r.family].booked += r.bookedSO;
+    }
+    const topFams = Object.values(famAgg).sort((a,b)=>b.fc-a.fc).slice(0,50);
+    document.getElementById('tblProdItems').innerHTML = `<thead><tr><th>Family</th><th>Product</th><th class="num">History</th><th class="num">Forecast</th><th class="num">Booked SO</th><th class="num">Cov %</th></tr></thead>
+      <tbody>${topFams.map(r=>{
+        const cov = r.fc ? Math.round(r.booked/r.fc*100) : null;
+        return `<tr><td>${esc(r.family)}</td><td>${PRODUCT_LABEL[r.product]||r.product}</td><td class="num">${fmt0(r.hist)}</td><td class="num">${fmt0(r.fc)}</td><td class="num">${fmt0(r.booked)}</td><td class="num">${cov==null?'—':cov+'%'}</td></tr>`;
+      }).join('')}</tbody>`;
+
+    // Rolling 12-week forecast table: rows = top families, cols = next 12 forecast weeks
+    const futureWeeks = Array.from(new Set(prod.filter(r=>!r.isHistory && r.prodForecast>0).map(r=>r.date.toISOString().slice(0,10)))).sort().slice(0,12);
+    const rollingFams = topFams.slice(0,20);
+    const cellMap = {};
+    for(const r of prod){
+      if(r.isHistory) continue;
+      const k = r.date.toISOString().slice(0,10);
+      if(!futureWeeks.includes(k)) continue;
+      cellMap[r.family] = cellMap[r.family] || {};
+      cellMap[r.family][k] = (cellMap[r.family][k]||0) + r.prodForecast;
+    }
+    document.getElementById('tblRolling').innerHTML = `<thead><tr><th>Family</th><th>Product</th>${futureWeeks.map(w=>`<th class="num">${w.slice(5)}</th>`).join('')}<th class="num">Total</th></tr></thead>
+      <tbody>${rollingFams.map(r=>{
+        const cells = futureWeeks.map(w => Math.round((cellMap[r.family]||{})[w]||0));
+        const tot = cells.reduce((a,b)=>a+b,0);
+        return `<tr><td>${esc(r.family)}</td><td>${PRODUCT_LABEL[r.product]||r.product}</td>${cells.map(v=>`<td class="num">${v?fmt0(v):'—'}</td>`).join('')}<td class="num"><b>${fmt0(tot)}</b></td></tr>`;
+      }).join('')}</tbody>`;
+    return;
+  }
+
+  // Generic production-runs renderer (fallback for non-NSTX files)
   const totalTons = prod.reduce((a,r)=>a+r.tons,0);
-  const days = new Set(prod.map(r=>r.date.toISOString().slice(0,10))); const avgDay = days.size?totalTons/days.size:0;
+  const days = new Set(prod.map(r=>r.date.toISOString().slice(0,10)));
+  const avgDay = days.size?totalTons/days.size:0;
   const heats = new Set(prod.map(r=>r.heat).filter(Boolean)).size;
   document.getElementById('prodKpis').innerHTML = `
     <div class="kpi green"><h3>Total Produced</h3><div class="val">${fmt0(totalTons)}<small>tons</small></div><div class="sub">${days.size} run days</div></div>
@@ -805,7 +1036,6 @@ function renderProduction(){
     <div class="kpi blue"><h3>Heats</h3><div class="val">${fmt0(heats)}</div><div class="sub">unique heat numbers</div></div>
     <div class="kpi green"><h3>Lines</h3><div class="val">${fmt0(new Set(prod.map(r=>r.line).filter(Boolean)).size)}</div><div class="sub">distinct mill/lines</div></div>
   `;
-  // Daily by product
   const byDP = {};
   for(const r of prod){ const k = r.date.toISOString().slice(0,10); byDP[k] = byDP[k]||{}; byDP[k][r.product] = (byDP[k][r.product]||0)+r.tons; }
   const labels = Object.keys(byDP).sort();
@@ -815,7 +1045,6 @@ function renderProduction(){
     data:{ labels, datasets: prods.map(p=>({label:PRODUCT_LABEL[p],backgroundColor:PRODUCT_COLORS[p],data:labels.map(k=>Math.round(byDP[k]?.[p]||0))})) },
     options:{ responsive:true, maintainAspectRatio:false, plugins:{legend:{position:'bottom'}}, scales:{x:{stacked:true},y:{stacked:true,title:{display:true,text:'Tons'}}} }
   });
-  // Mix donut
   const mix = {};
   for(const r of prod) mix[r.product] = (mix[r.product]||0) + r.tons;
   const mLabels = Object.keys(mix);
@@ -824,11 +1053,11 @@ function renderProduction(){
     data:{ labels:mLabels.map(p=>PRODUCT_LABEL[p]||p), datasets:[{data:mLabels.map(p=>Math.round(mix[p])), backgroundColor:mLabels.map(p=>PRODUCT_COLORS[p]||'#7f8c8d')}]},
     options:{ responsive:true, maintainAspectRatio:false, plugins:{legend:{position:'bottom'}} }
   });
-  // Items table
   const itAgg = {};
   for(const r of prod){ const k = r.desc || r.heat; if(!k) continue; itAgg[k] = itAgg[k] || {desc:k, product:r.product, tons:0, runs:0}; itAgg[k].tons+=r.tons; itAgg[k].runs+=1; }
   const top = Object.values(itAgg).sort((a,b)=>b.tons-a.tons).slice(0,50);
   document.getElementById('tblProdItems').innerHTML = `<thead><tr><th>Item / Heat</th><th>Product</th><th class="num">Runs</th><th class="num">Tons</th></tr></thead><tbody>${top.map(r=>`<tr><td>${esc(r.desc)}</td><td>${PRODUCT_LABEL[r.product]||r.product}</td><td class="num">${fmt0(r.runs)}</td><td class="num">${fmt1(r.tons)}</td></tr>`).join('')}</tbody>`;
+  document.getElementById('tblRolling').innerHTML='';
 }
 
 /* =====================================================================
@@ -839,50 +1068,100 @@ function renderVs(){
   const ship = applyShipFilters();
   const inv = applyInvFilters();
   const onHand = inv.reduce((a,r)=>a+r.tons,0);
-  const prodTotal = prod.reduce((a,r)=>a+r.tons,0);
   const shipTotal = ship.reduce((a,r)=>a+r.tons,0);
+  const isFc = prod.length && prod[0].kind === 'forecast';
 
-  // Average daily ship → days of supply
+  // Two demand signals: actual recent shipments (avg/day) and forecast (avg/week → /day)
   const shipDays = new Set(ship.map(r=>r.date.toISOString().slice(0,10))).size;
   const avgShipDay = shipDays ? shipTotal/shipDays : 0;
-  const dos = avgShipDay ? onHand/avgShipDay : null;
+  const dosShip = avgShipDay ? onHand/avgShipDay : null;
+
+  // Forecast-driven DOS uses Final Production Forecast over forward weeks
+  const fcRows = isFc ? prod.filter(r=>!r.isHistory && r.prodForecast>0) : [];
+  const fcWeeks = new Set(fcRows.map(r=>r.date.toISOString().slice(0,10)));
+  const fcTotal = fcRows.reduce((a,r)=>a+r.prodForecast,0);
+  const fcAvgDay = fcWeeks.size ? (fcTotal/fcWeeks.size)/7 : 0;
+  const dosFc = fcAvgDay ? onHand/fcAvgDay : null;
+
+  // Production tons available depending on file type
+  const prodTotal = isFc
+    ? prod.filter(r=>r.isHistory).reduce((a,r)=>a+r.salesHistory,0) // use history as "produced (observed)"
+    : prod.reduce((a,r)=>a+r.tons,0);
   const buildShip = shipTotal ? prodTotal/shipTotal : null;
+  const bookedAll = isFc ? prod.reduce((a,r)=>a+r.bookedSO,0) : 0;
+  const coverage = (isFc && fcTotal) ? Math.round(bookedAll/fcTotal*100) : null;
+
   document.getElementById('vsKpis').innerHTML = `
     <div class="kpi green"><h3>On-Hand</h3><div class="val">${fmt0(onHand)}<small>tons</small></div><div class="sub">latest snapshot</div></div>
-    <div class="kpi blue"><h3>Produced (range)</h3><div class="val">${fmt0(prodTotal)}<small>tons</small></div><div class="sub">${prod.length?'observed':'no data'}</div></div>
-    <div class="kpi amber"><h3>Shipped (range)</h3><div class="val">${fmt0(shipTotal)}<small>tons</small></div><div class="sub">${shipDays} days</div></div>
-    <div class="kpi ${dos==null?'':(dos>30?'red':dos<7?'amber':'green')}"><h3>Days of Supply</h3><div class="val">${dos==null?'—':fmt1(dos)}<small>days</small></div><div class="sub">on-hand ÷ avg ship/day</div></div>
+    <div class="kpi amber"><h3>Shipped (range)</h3><div class="val">${fmt0(shipTotal)}<small>tons</small></div><div class="sub">${shipDays} days · ${fmt0(avgShipDay)}/day avg</div></div>
+    <div class="kpi blue"><h3>${isFc?'Forecast (forward)':'Produced (range)'}</h3><div class="val">${fmt0(isFc?fcTotal:prodTotal)}<small>tons</small></div><div class="sub">${isFc?fcWeeks.size+' weeks · '+fmt0(fcAvgDay)+'/day':(prod.length?'observed':'no data')}</div></div>
+    <div class="kpi ${dosShip==null?'':(dosShip>30?'red':dosShip<7?'amber':'green')}"><h3>DOS — Recent Ship Rate</h3><div class="val">${dosShip==null?'—':fmt1(dosShip)}<small>days</small></div><div class="sub">on-hand ÷ avg ship/day</div></div>
+    ${isFc?`<div class="kpi ${dosFc==null?'':(dosFc>30?'red':dosFc<7?'amber':'green')}"><h3>DOS — Forecast Demand</h3><div class="val">${dosFc==null?'—':fmt1(dosFc)}<small>days</small></div><div class="sub">on-hand ÷ avg forecast/day</div></div>`:''}
     <div class="kpi ${buildShip==null?'':(buildShip>1.05?'amber':buildShip<0.95?'red':'green')}"><h3>Build : Ship</h3><div class="val">${buildShip==null?'—':buildShip.toFixed(2)}</div><div class="sub">>1 building ahead</div></div>
+    ${isFc?`<div class="kpi ${coverage==null?'':(coverage>=80?'green':coverage>=50?'amber':'red')}"><h3>Forecast Coverage</h3><div class="val">${coverage==null?'—':coverage+'%'}</div><div class="sub">${fmt0(bookedAll)} booked SO ÷ forecast</div></div>`:''}
   `;
 
-  // Daily built vs shipped
+  // Time-series chart: history + shipments (past) + forecast (forward)
   const map = {};
-  for(const r of prod){ const k = r.date.toISOString().slice(0,10); map[k] = map[k]||{p:0,s:0}; map[k].p += r.tons; }
-  for(const r of ship){ const k = r.date.toISOString().slice(0,10); map[k] = map[k]||{p:0,s:0}; map[k].s += r.tons; }
-  const labels = Object.keys(map).sort();
-  makeChart('chartBvS', {
-    type:'line',
-    data:{ labels, datasets:[
-      { label:'Produced', data:labels.map(k=>Math.round(map[k].p)), borderColor:PRODUCT_COLORS.REBAR, backgroundColor:'rgba(0,107,63,.15)', fill:false, tension:.2 },
-      { label:'Shipped', data:labels.map(k=>Math.round(map[k].s)), borderColor:'#d68910', backgroundColor:'rgba(214,137,16,.15)', fill:false, tension:.2 }
-    ]},
-    options:{ responsive:true, maintainAspectRatio:false, plugins:{legend:{position:'bottom'}}, scales:{y:{title:{display:true,text:'Tons'}}} }
-  });
+  if(isFc){
+    for(const r of prod){
+      const k = r.date.toISOString().slice(0,10);
+      map[k] = map[k]||{h:0,s:0,f:0};
+      if(r.isHistory) map[k].h += r.salesHistory;
+      else map[k].f += r.prodForecast;
+    }
+    for(const r of ship){ const k = r.date.toISOString().slice(0,10); map[k] = map[k]||{h:0,s:0,f:0}; map[k].s += r.tons; }
+    const labels = Object.keys(map).sort();
+    makeChart('chartBvS', {
+      type:'line',
+      data:{ labels, datasets:[
+        { label:'Sales History', data:labels.map(k=>Math.round(map[k].h||0)), borderColor:PRODUCT_COLORS.REBAR, backgroundColor:'rgba(0,107,63,.15)', tension:.2, spanGaps:true },
+        { label:'Shipments (actual)', data:labels.map(k=>Math.round(map[k].s||0)), borderColor:'#d68910', backgroundColor:'rgba(214,137,16,.15)', tension:.2, spanGaps:true },
+        { label:'Production Forecast', data:labels.map(k=>Math.round(map[k].f||0)), borderColor:'#2874a6', backgroundColor:'rgba(40,116,166,.15)', borderDash:[6,4], tension:.2, spanGaps:true }
+      ]},
+      options:{ responsive:true, maintainAspectRatio:false, plugins:{legend:{position:'bottom'}}, scales:{y:{title:{display:true,text:'Tons'}}} }
+    });
+  } else {
+    for(const r of prod){ const k = r.date.toISOString().slice(0,10); map[k] = map[k]||{p:0,s:0}; map[k].p += r.tons; }
+    for(const r of ship){ const k = r.date.toISOString().slice(0,10); map[k] = map[k]||{p:0,s:0}; map[k].s += r.tons; }
+    const labels = Object.keys(map).sort();
+    makeChart('chartBvS', {
+      type:'line',
+      data:{ labels, datasets:[
+        { label:'Produced', data:labels.map(k=>Math.round(map[k].p||0)), borderColor:PRODUCT_COLORS.REBAR, backgroundColor:'rgba(0,107,63,.15)', tension:.2 },
+        { label:'Shipped', data:labels.map(k=>Math.round(map[k].s||0)), borderColor:'#d68910', backgroundColor:'rgba(214,137,16,.15)', tension:.2 }
+      ]},
+      options:{ responsive:true, maintainAspectRatio:false, plugins:{legend:{position:'bottom'}}, scales:{y:{title:{display:true,text:'Tons'}}} }
+    });
+  }
 
-  // DOS by product table
+  // Per-product DOS table — uses forecast for DOS when available
   const prods = ['REBAR','HR-MBQ','EB-SBQ','BILLETS','OTHER'];
   const rows = prods.map(p => {
     const oh = inv.filter(r=>r.product===p).reduce((a,r)=>a+r.tons,0);
     const sp = ship.filter(r=>r.product===p);
     const sd = new Set(sp.map(r=>r.date.toISOString().slice(0,10))).size;
     const st = sp.reduce((a,r)=>a+r.tons,0);
-    const av = sd ? st/sd : 0;
-    const d = av ? oh/av : null;
-    const pt = prod.filter(r=>r.product===p).reduce((a,r)=>a+r.tons,0);
-    const bs = st ? pt/st : null;
-    return { p, oh, st, pt, av, d, bs };
-  }).filter(r=>r.oh>0 || r.st>0 || r.pt>0);
-  document.getElementById('tblDOS').innerHTML = `<thead><tr><th>Product</th><th class="num">On-Hand (tons)</th><th class="num">Produced</th><th class="num">Shipped</th><th class="num">Avg Ship/Day</th><th class="num">DOS</th><th class="num">Build:Ship</th></tr></thead><tbody>${rows.map(r=>`<tr><td>${PRODUCT_LABEL[r.p]||r.p}</td><td class="num">${fmt1(r.oh)}</td><td class="num">${fmt1(r.pt)}</td><td class="num">${fmt1(r.st)}</td><td class="num">${fmt1(r.av)}</td><td class="num">${r.d==null?'—':fmt1(r.d)}</td><td class="num">${r.bs==null?'—':r.bs.toFixed(2)}</td></tr>`).join('')}</tbody>`;
+    const avShip = sd ? st/sd : 0;
+    const fcP = isFc ? prod.filter(r=>r.product===p && !r.isHistory && r.prodForecast>0) : [];
+    const fcW = new Set(fcP.map(r=>r.date.toISOString().slice(0,10))).size;
+    const fcT = fcP.reduce((a,r)=>a+r.prodForecast,0);
+    const avFc = fcW ? (fcT/fcW)/7 : 0;
+    const dosS = avShip ? oh/avShip : null;
+    const dosF = avFc ? oh/avFc : null;
+    const histT = isFc ? prod.filter(r=>r.product===p && r.isHistory).reduce((a,r)=>a+r.salesHistory,0)
+                       : prod.filter(r=>r.product===p).reduce((a,r)=>a+r.tons,0);
+    return { p, oh, st, histT, fcT, avShip, avFc, dosS, dosF };
+  }).filter(r=>r.oh>0 || r.st>0 || r.histT>0 || r.fcT>0);
+
+  const headRow = isFc
+    ? `<tr><th>Product</th><th class="num">On-Hand</th><th class="num">History</th><th class="num">Forecast</th><th class="num">Shipped</th><th class="num">Avg Ship/Day</th><th class="num">Avg Fc/Day</th><th class="num">DOS (ship)</th><th class="num">DOS (forecast)</th></tr>`
+    : `<tr><th>Product</th><th class="num">On-Hand</th><th class="num">Produced</th><th class="num">Shipped</th><th class="num">Avg Ship/Day</th><th class="num">DOS</th></tr>`;
+  const bodyRows = rows.map(r => isFc
+    ? `<tr><td>${PRODUCT_LABEL[r.p]||r.p}</td><td class="num">${fmt0(r.oh)}</td><td class="num">${fmt0(r.histT)}</td><td class="num">${fmt0(r.fcT)}</td><td class="num">${fmt0(r.st)}</td><td class="num">${fmt0(r.avShip)}</td><td class="num">${fmt0(r.avFc)}</td><td class="num">${r.dosS==null?'—':fmt1(r.dosS)}</td><td class="num">${r.dosF==null?'—':fmt1(r.dosF)}</td></tr>`
+    : `<tr><td>${PRODUCT_LABEL[r.p]||r.p}</td><td class="num">${fmt0(r.oh)}</td><td class="num">${fmt0(r.histT)}</td><td class="num">${fmt0(r.st)}</td><td class="num">${fmt0(r.avShip)}</td><td class="num">${r.dosS==null?'—':fmt1(r.dosS)}</td></tr>`
+  ).join('');
+  document.getElementById('tblDOS').innerHTML = `<thead>${headRow}</thead><tbody>${bodyRows}</tbody>`;
 }
 
 /* =====================================================================
@@ -991,15 +1270,29 @@ document.getElementById('shipChartToggle').addEventListener('click', e => {
     saveState(); renderShipping();
   }
 });
+document.getElementById('prodChartToggle').addEventListener('click', e => {
+  if(e.target.matches('.chip')){
+    STATE.filters.prodRange = e.target.dataset.prng;
+    document.querySelectorAll('#prodChartToggle .chip').forEach(c=>c.classList.toggle('active', c===e.target));
+    saveState(); renderProduction();
+  }
+});
 
 async function handleUpload(file, kind){
   if(!file) return;
   clearBanner();
   banner('Reading '+file.name+' …');
   try{
-    const wb = await readWorkbook(file);
-    const ws = wb.Sheets[wb.SheetNames[0]];
-    const rows = XLSX.utils.sheet_to_json(ws, { header:1, raw:false, defval:null, blankrows:false });
+    let rows = null;
+    // UTF-16 / TSV files (the NSTX forecast .xls export is one of these)
+    const tsv = await readMaybeUtf16Tsv(file);
+    if(tsv && tsv.length){
+      rows = tsv;
+    } else {
+      const wb = await readWorkbook(file);
+      const ws = wb.Sheets[wb.SheetNames[0]];
+      rows = XLSX.utils.sheet_to_json(ws, { header:1, raw:false, defval:null, blankrows:false });
+    }
     let parsed;
     if(kind==='inv') parsed = parseInventory(rows);
     else if(kind==='ship') parsed = parseShipments(rows);
