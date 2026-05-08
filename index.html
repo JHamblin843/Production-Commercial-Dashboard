@@ -143,14 +143,6 @@
 
   /* Gantt */
   .gantt-wrap{position:relative;width:100%;overflow-x:auto;background:#fafbfb;border:1px solid var(--gray-100);border-radius:6px}
-  .gantt-svg{display:block;font-family:inherit}
-  .gantt-svg .lane{fill:#fff}
-  .gantt-svg .lane-alt{fill:#f3f5f4}
-  .gantt-svg .lane-label{font-size:12px;font-weight:700;fill:var(--gray-700)}
-  .gantt-svg .axis-label{font-size:10px;fill:var(--gray-500)}
-  .gantt-svg .axis-tick{stroke:#e0e3e1;stroke-width:1}
-  .gantt-svg rect.bar{cursor:pointer;stroke:rgba(0,0,0,.18);stroke-width:.5}
-  .gantt-svg rect.bar:hover{stroke:#000;stroke-width:1.5}
   .gantt-tooltip{position:absolute;pointer-events:none;background:rgba(20,30,25,.95);color:#fff;padding:8px 10px;border-radius:6px;font-size:12px;line-height:1.5;display:none;z-index:10;max-width:340px}
   .gantt-tooltip b{color:#fff}
   .gantt-controls{display:flex;gap:8px;align-items:center;margin-bottom:10px;flex-wrap:wrap;font-size:13px}
@@ -179,9 +171,15 @@
   .cal-cell .wk{position:absolute;top:3px;left:7px;font-size:9px;color:var(--gray-500);font-weight:700;letter-spacing:1px;z-index:2}
   .cal-cell.has-data{cursor:default}
   /* Each cell now hosts a vertical stack of bars (one per session that
-     overlapped that day). Bar heights are flex-weighted by hoursToday. */
-  .cal-stack{position:absolute;left:0;right:0;top:22px;bottom:0;display:flex;flex-direction:column}
-  .cal-bar{color:#fff;font-weight:700;display:flex;flex-direction:column;justify-content:center;line-height:1.15;padding:2px 7px;overflow:hidden;cursor:pointer;border-bottom:1px solid rgba(255,255,255,.18)}
+     overlapped that day). Bar heights are flex-weighted by hoursToday,
+     but each bar gets a readable minimum height — when more sessions
+     stack up than will fit, the cell shows a thin scrollbar so every
+     session stays accessible. */
+  .cal-stack{position:absolute;left:0;right:0;top:22px;bottom:0;display:flex;flex-direction:column;overflow-y:auto;scrollbar-width:thin;scrollbar-color:rgba(0,0,0,.28) transparent}
+  .cal-stack::-webkit-scrollbar{width:6px}
+  .cal-stack::-webkit-scrollbar-thumb{background:rgba(0,0,0,.28);border-radius:3px}
+  .cal-stack::-webkit-scrollbar-track{background:transparent}
+  .cal-bar{color:#fff;font-weight:700;display:flex;flex-direction:column;justify-content:center;line-height:1.15;padding:2px 7px;overflow:hidden;cursor:pointer;border-bottom:1px solid rgba(255,255,255,.18);min-height:20px}
   .cal-bar:last-child{border-bottom:none}
   .cal-bar .pid{font-weight:800;font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;letter-spacing:.2px}
   .cal-bar .meta{font-size:10.5px;font-weight:600;opacity:.95}
@@ -325,14 +323,11 @@
         <div class="head">Rolling Schedule — Gantt by Mill<span class="right" id="ganttRange"></span></div>
         <div class="body">
           <div class="gantt-controls">
-            <span class="label">View:</span>
-            <button class="chip active" data-gmode="timeline">Timeline</button>
-            <button class="chip" data-gmode="calendar">Calendar</button>
-            <span class="label" style="margin-left:14px">Window:</span>
+            <span class="label">Window:</span>
             <button class="chip" data-gw="7">Last 7d</button>
-            <button class="chip active" data-gw="30">Last 30d</button>
+            <button class="chip" data-gw="30">Last 30d</button>
             <button class="chip" data-gw="90">Last 90d</button>
-            <button class="chip" data-gw="all">All</button>
+            <button class="chip active" data-gw="all">All</button>
             <span class="label" style="margin-left:14px">Min span:</span>
             <button class="chip active" data-gmin="0">All</button>
             <button class="chip" data-gmin="1">≥1h</button>
@@ -341,11 +336,10 @@
             <span class="summary" id="ganttSummary"></span>
           </div>
           <div class="gantt-wrap" id="ganttWrap">
-            <svg class="gantt-svg" id="ganttSvg"></svg>
-            <div id="ganttCalendar" style="display:none"></div>
+            <div id="ganttCalendar"></div>
             <div class="gantt-tooltip" id="ganttTip"></div>
           </div>
-          <div class="sub" style="font-size:12px;color:var(--gray-500);margin-top:8px">A rolling = consecutive bundles in the same mill sharing Product ID, Grade, Length, and Disposition. Bar width = first bundle → last bundle (span). Click any bar to filter the rolling table below.</div>
+          <div class="sub" style="font-size:12px;color:var(--gray-500);margin-top:8px">A rolling = consecutive bundles in the same mill sharing Product ID, Grade, Length, and Disposition. Each calendar cell shows every session that overlapped that day, stacked top-to-bottom. Click any bar to filter the rolling table below.</div>
         </div>
       </div>
       <div class="card">
@@ -456,7 +450,7 @@ const STATE = {
   // Mill bundle data lives in memory only (too big for localStorage); rollings persist.
   millBundles: { '1': [], '2': [] },
   rollings:    { '1': [], '2': [] },
-  filters: { product: 'ALL', bay: 'ALL', includeHold: true, shipRange: 'day', prodSub: 'runs', ganttMode: 'timeline', ganttWindow: '30', ganttMin: 0, calMill: null, rollingMillFilter: null, rollingKeyFilter: null, detailCat: 'ALL', detailPid: null, detailYear: 'ALL', detailType: 'ALL', detailGroup: 'ALL', detailGrade: 'ALL' },
+  filters: { product: 'ALL', bay: 'ALL', includeHold: true, shipRange: 'day', prodSub: 'runs', ganttWindow: 'all', ganttMin: 0, calMill: null, rollingMillFilter: null, rollingKeyFilter: null, detailCat: 'ALL', detailPid: null, detailYear: 'ALL', detailType: 'ALL', detailGroup: 'ALL', detailGrade: 'ALL' },
   asOf: null
 };
 
@@ -1475,12 +1469,7 @@ function renderMillRuns(){
   document.getElementById('ganttRange').textContent = visible.length ? `${dstr(minD)} → ${dstr(maxD)} · ${fmt0(visible.length)} campaigns` : '';
   document.getElementById('ganttSummary').innerHTML = `<b>${fmt0(visible.length)}</b> campaigns · <b>${fmt0(totalTons)}</b> tons · <b>${fmt0(totalHours)}</b> hrs`;
 
-  const mode = STATE.filters.ganttMode || 'timeline';
-  if(mode === 'calendar'){
-    renderGanttCalendar(visible, pidColors);
-  } else {
-    renderGantt(visible, minD, maxD, pidColors);
-  }
+  renderGanttCalendar(visible, pidColors);
 
   // Rolling summary table — apply optional click-filter from Gantt
   let tableRows = visible;
@@ -1960,100 +1949,6 @@ function renderDetailReport(allRolls, pidColors){
   }));
 }
 
-function renderGantt(rollings, minD, maxD, pidColors){
-  const wrap = document.getElementById('ganttWrap');
-  const svg = document.getElementById('ganttSvg');
-  const cal = document.getElementById('ganttCalendar');
-  const tip = document.getElementById('ganttTip');
-  svg.style.display = 'block';
-  if(cal) cal.style.display = 'none';
-  if(!rollings.length || !minD || !maxD){
-    svg.innerHTML = ''; svg.setAttribute('width','100%'); svg.setAttribute('height','60');
-    return;
-  }
-  const W = Math.max(800, wrap.clientWidth - 24);
-  const PAD_L = 70, PAD_R = 16, PAD_T = 12, PAD_B = 28;
-  const LANE_H = 70;
-  const lanes = ['1','2'];
-  const H = PAD_T + lanes.length * LANE_H + PAD_B;
-  const innerW = W - PAD_L - PAD_R;
-  const span = Math.max(1, maxD - minD);
-  const xOf = d => PAD_L + ((d - minD) / span) * innerW;
-  const laneY = m => PAD_T + lanes.indexOf(m) * LANE_H;
-  const tickFmt = (date) => new Date(date).toISOString().slice(0,10);
-  const days = (maxD - minD) / 86400000;
-  let stepDays = 1;
-  if(days > 240) stepDays = 30;
-  else if(days > 60) stepDays = 7;
-  else if(days > 30) stepDays = 3;
-  const ticks = [];
-  const t0 = new Date(minD); t0.setHours(0,0,0,0);
-  for(let t = t0.getTime(); t <= maxD; t += stepDays*86400000){
-    ticks.push(t);
-  }
-
-  let html = '';
-  for(let i=0;i<lanes.length;i++){
-    const m = lanes[i];
-    html += `<rect class="${i%2===0?'lane':'lane-alt'}" x="${PAD_L}" y="${laneY(m)}" width="${innerW}" height="${LANE_H}" />`;
-    html += `<text class="lane-label" x="${PAD_L-10}" y="${laneY(m)+LANE_H/2+5}" text-anchor="end">MILL ${m}</text>`;
-  }
-  for(const t of ticks){
-    const x = xOf(t);
-    html += `<line class="axis-tick" x1="${x}" y1="${PAD_T}" x2="${x}" y2="${H-PAD_B}" />`;
-    html += `<text class="axis-label" x="${x}" y="${H-PAD_B+14}" text-anchor="middle">${tickFmt(t)}</text>`;
-  }
-  // One bar per session (campaign). Colors come from the product-ID palette
-  // so every session of "1REBAR 04-60" lands on the same color regardless of
-  // when it ran.
-  for(const r of rollings){
-    const fill = (pidColors && pidColors[r.productId]) || PRODUCT_COLORS[r.product] || '#7f8c8d';
-    const sel = STATE.filters.rollingKeyFilter === r.key ? ';stroke:#000;stroke-width:2' : '';
-    const lenCount = r.lengthCount || (r.lengthBreakdown ? r.lengthBreakdown.length : 0);
-    const dom = r.lengthBreakdown && r.lengthBreakdown[0];
-    const lenLabel = !dom ? '—' : (lenCount===1 ? mmToFtIn(dom.length) : `${mmToFtIn(dom.length)} + ${lenCount-1} more`);
-    const x1 = xOf(r.start.getTime());
-    const x2 = Math.max(x1+1, xOf(r.end.getTime()));
-    const y = laneY(r.mill) + 8;
-    const h = LANE_H - 16;
-    html += `<rect class="bar" x="${x1}" y="${y}" width="${x2-x1}" height="${h}" fill="${fill}" style="opacity:.88${sel}"
-              data-key="${esc(r.key)}" data-mill="${r.mill}"
-              data-pid="${esc(r.productId)}" data-grade="${esc(r.grade)}" data-len="${esc(lenLabel)}" data-disp="${esc(r.disposition)}"
-              data-start="${r.start.toISOString()}" data-end="${r.end.toISOString()}"
-              data-tons="${r.tons.toFixed(2)}" data-hours="${r.hours.toFixed(1)}" data-bundles="${r.bundles}"
-              data-heats="${r.heats}" data-gap="${r.gapDays==null?'':r.gapDays.toFixed(2)}"
-            />`;
-  }
-  svg.setAttribute('width', W);
-  svg.setAttribute('height', H);
-  svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
-  svg.innerHTML = html;
-
-  // Hover/click handlers
-  svg.querySelectorAll('rect.bar').forEach(rect => {
-    rect.addEventListener('mouseenter', e => {
-      const d = e.target.dataset;
-      const gap = d.gap === '' ? null : Number(d.gap);
-      tip.innerHTML = `<b>Mill ${d.mill} · ${esc(d.pid)}</b><br>
-        Grade: ${esc(d.grade)} · Disp: ${esc(d.disp)} · Lengths: ${esc(d.len)}<br>
-        ${d.start.slice(0,16).replace('T',' ')} → ${d.end.slice(0,16).replace('T',' ')}<br>
-        <b>${fmt1(Number(d.tons))} tons</b> · ${fmt1(Number(d.hours))} hrs · ${fmt0(Number(d.bundles))} bundles · ${fmt0(Number(d.heats))} heats<br>
-        <span style="color:#bdc3c7;font-size:11px">Gap since previous run of this product:</span> <b>${fmtGapDays(gap)}</b>`;
-      tip.style.display = 'block';
-    });
-    rect.addEventListener('mousemove', e => {
-      const r = wrap.getBoundingClientRect();
-      tip.style.left = (e.clientX - r.left + 12) + 'px';
-      tip.style.top = (e.clientY - r.top + 12) + 'px';
-    });
-    rect.addEventListener('mouseleave', () => { tip.style.display='none'; });
-    rect.addEventListener('click', () => {
-      const k = rect.dataset.key;
-      STATE.filters.rollingKeyFilter = STATE.filters.rollingKeyFilter === k ? null : k;
-      renderMillRuns();
-    });
-  });
-}
 
 /* Calendar mode: traditional month-grid layout (Sun→Sat columns).
    Each day cell is colored by the dominant session that ran that day on the
@@ -2062,11 +1957,8 @@ function renderGantt(rollings, minD, maxD, pidColors){
    (since each of those days is dominated by that session). Empty days stay
    white. Click a day to filter the rolling table to its session. */
 function renderGanttCalendar(rollings, pidColors){
-  const svg = document.getElementById('ganttSvg');
   const cal = document.getElementById('ganttCalendar');
   const tip = document.getElementById('ganttTip');
-  svg.style.display = 'none';
-  cal.style.display = 'block';
   if(!rollings.length){ cal.innerHTML = '<div style="padding:30px;color:var(--gray-500)">No rollings in window.</div>'; return; }
 
   // Choose mill to render (if both have data, allow toggle)
@@ -2592,6 +2484,12 @@ function syncProdSubTab(){
   document.querySelectorAll('#prodSubtabs .subtab').forEach(t => t.classList.toggle('active', t.dataset.sub===sub));
   document.getElementById('prodSub-runs').style.display = sub==='runs' ? 'block' : 'none';
   document.getElementById('prodSub-fc').style.display   = sub==='fc'   ? 'block' : 'none';
+  // Reflect persisted Window / Min-span selections on the chip strip so the
+  // active highlight matches whatever was in localStorage on load.
+  const gw = String(STATE.filters.ganttWindow || 'all');
+  document.querySelectorAll('.gantt-controls .chip[data-gw]').forEach(x => x.classList.toggle('active', x.dataset.gw === gw));
+  const gm = String(STATE.filters.ganttMin || 0);
+  document.querySelectorAll('.gantt-controls .chip[data-gmin]').forEach(x => x.classList.toggle('active', x.dataset.gmin === gm));
 }
 
 function esc(s){ return String(s==null?'':s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
@@ -2709,16 +2607,6 @@ document.querySelectorAll('.gantt-controls .chip[data-gw]').forEach(c => c.addEv
 document.querySelectorAll('.gantt-controls .chip[data-gmin]').forEach(c => c.addEventListener('click', () => {
   STATE.filters.ganttMin = Number(c.dataset.gmin);
   document.querySelectorAll('.gantt-controls .chip[data-gmin]').forEach(x => x.classList.toggle('active', x===c));
-  saveState(); renderMillRuns();
-}));
-document.querySelectorAll('.gantt-controls .chip[data-gmode]').forEach(c => c.addEventListener('click', () => {
-  STATE.filters.ganttMode = c.dataset.gmode;
-  document.querySelectorAll('.gantt-controls .chip[data-gmode]').forEach(x => x.classList.toggle('active', x===c));
-  // Calendar mode reads better at All-time; bump window if user is on a tight one
-  if(c.dataset.gmode === 'calendar' && (STATE.filters.ganttWindow === '7' || STATE.filters.ganttWindow === '30')){
-    STATE.filters.ganttWindow = 'all';
-    document.querySelectorAll('.gantt-controls .chip[data-gw]').forEach(x => x.classList.toggle('active', x.dataset.gw === 'all'));
-  }
   saveState(); renderMillRuns();
 }));
 
