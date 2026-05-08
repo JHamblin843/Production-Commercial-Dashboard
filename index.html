@@ -163,6 +163,27 @@
   table.length-detail{width:auto;min-width:600px;border:1px solid var(--gray-100);border-radius:4px}
   table.length-detail th{background:#eef7f1;color:var(--green-d);font-size:10px;padding:6px 10px}
   table.length-detail td{padding:5px 10px;font-size:12px}
+
+  /* Month-grid calendar mode */
+  #ganttCalendar{padding:6px}
+  .calmill-controls{display:flex;gap:6px;align-items:center;padding:4px 4px 12px;font-size:13px}
+  .cal-month{margin:0 0 26px}
+  .cal-title{font-size:14px;font-weight:700;color:var(--green-d);margin:0 0 8px;display:flex;justify-content:space-between;align-items:baseline}
+  .cal-title .meta{font-size:12px;color:var(--gray-500);font-weight:500}
+  .cal-grid{display:grid;grid-template-columns:repeat(7,1fr);border:1px solid var(--gray-200);border-radius:6px;overflow:hidden;background:#fff}
+  .cal-head{background:var(--gray-50);padding:6px 0;text-align:center;font-size:11px;font-weight:700;color:var(--gray-500);letter-spacing:1.5px;border-bottom:1px solid var(--gray-200)}
+  .cal-cell{height:88px;border-right:1px solid var(--gray-100);border-bottom:1px solid var(--gray-100);position:relative;padding:0;font-size:11px;background:#fff;overflow:hidden}
+  .cal-cell.outside{background:#fafbfb;color:var(--gray-200)}
+  .cal-cell.today{outline:2px solid var(--green);outline-offset:-2px;z-index:1}
+  .cal-cell .date{position:absolute;top:3px;right:7px;font-weight:600;color:var(--gray-700);font-size:12px;z-index:2}
+  .cal-cell .wk{position:absolute;top:3px;left:7px;font-size:9px;color:var(--gray-500);font-weight:700;letter-spacing:1px;z-index:2}
+  .cal-cell.has-data{cursor:pointer}
+  .cal-cell .label{position:absolute;left:0;right:0;bottom:0;top:22px;color:#fff;font-weight:700;font-size:10.5px;display:flex;flex-direction:column;justify-content:center;align-items:flex-start;line-height:1.3;padding:3px 7px}
+  .cal-cell .label .pid{font-weight:800;font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;width:100%}
+  .cal-cell .label .meta{font-size:9.5px;font-weight:500;opacity:.95;margin-top:1px}
+  .cal-cell .more{position:absolute;top:22px;right:4px;font-size:9px;color:#fff;font-weight:700;background:rgba(0,0,0,.32);padding:1px 5px;border-radius:8px;z-index:2}
+  .cal-cell.has-data:hover{filter:brightness(1.06)}
+  .cal-cell.selected{outline:2px solid #000;outline-offset:-2px;z-index:1}
 </style>
 </head>
 <body>
@@ -303,6 +324,7 @@
           </div>
           <div class="gantt-wrap" id="ganttWrap">
             <svg class="gantt-svg" id="ganttSvg"></svg>
+            <div id="ganttCalendar" style="display:none"></div>
             <div class="gantt-tooltip" id="ganttTip"></div>
           </div>
           <div class="sub" style="font-size:12px;color:var(--gray-500);margin-top:8px">A rolling = consecutive bundles in the same mill sharing Product ID, Grade, Length, and Disposition. Bar width = first bundle → last bundle (span). Click any bar to filter the rolling table below.</div>
@@ -411,7 +433,7 @@ const STATE = {
   // Mill bundle data lives in memory only (too big for localStorage); rollings persist.
   millBundles: { '1': [], '2': [] },
   rollings:    { '1': [], '2': [] },
-  filters: { product: 'ALL', bay: 'ALL', includeHold: true, shipRange: 'day', prodSub: 'runs', ganttMode: 'timeline', ganttWindow: '30', ganttMin: 0, rollingMillFilter: null, rollingKeyFilter: null },
+  filters: { product: 'ALL', bay: 'ALL', includeHold: true, shipRange: 'day', prodSub: 'runs', ganttMode: 'timeline', ganttWindow: '30', ganttMin: 0, calMill: null, rollingMillFilter: null, rollingKeyFilter: null },
   asOf: null
 };
 
@@ -436,8 +458,8 @@ function loadState(){
       ...r,
       start: r.start?new Date(r.start):null,
       end: r.end?new Date(r.end):null,
-      lengthBreakdown: (r.lengthBreakdown||[]).map(l => ({...l, start: l.start?new Date(l.start):null, end: l.end?new Date(l.end):null})),
-      subRollings: (r.subRollings||[]).map(s => ({...s, start: s.start?new Date(s.start):null, end: s.end?new Date(s.end):null}))
+      prevEnd: r.prevEnd?new Date(r.prevEnd):null,
+      lengthBreakdown: (r.lengthBreakdown||[]).map(l => ({...l, start: l.start?new Date(l.start):null, end: l.end?new Date(l.end):null}))
     }));
     STATE.rollings = { '1': reviveRoll(s.rollings && s.rollings['1']), '2': reviveRoll(s.rollings && s.rollings['2']) };
     return true;
@@ -910,76 +932,104 @@ function parseMillRuns(rows, mill){
   return out;
 }
 
-/* A "rolling" (campaign) groups every bundle sharing
-   (mill, productId, grade, disposition), regardless of interruptions
-   from other products. Length variants and contiguous sub-runs ride
-   along on each campaign for drill-down. */
-function computeRollings(bundles){
+/* A "rolling" / "campaign" = a contiguous mill session sharing
+   (mill, productId, grade, disposition). Brief interruptions of other
+   products are tolerated: if the same product returns within
+   `gapMergeHours` of its last bundle, we consider it the same session
+   rather than a new one. Default 24h matches the operations heuristic
+   the user verified against their screenshot (~5 sessions per long
+   campaign instead of dozens of micro-sessions). */
+function computeRollings(bundles, gapMergeHours){
   if(!bundles || !bundles.length) return [];
+  if(gapMergeHours == null) gapMergeHours = 24;
   const sorted = [...bundles].sort((a,b) => a.date - b.date);
-  const map = new Map();
-  let lastKey = null;
+
+  // Pass 1: collect raw contiguous blocks.
+  const raw = [];
+  let cur = null;
   for(const b of sorted){
     const key = b.mill+'|'+b.productId+'|'+b.grade+'|'+b.disposition;
-    let c = map.get(key);
-    if(!c){
-      c = {
+    if(cur && cur.key === key){
+      cur.bundles++;
+      cur.tons += b.tons;
+      cur.pieces += b.pieces;
+      if(b.date > cur.end) cur.end = new Date(b.date);
+      cur._heats.add(b.heat);
+      cur._crews.add(b.crew);
+      let lr = cur._lenMap.get(b.length);
+      if(!lr){ lr = { length:b.length, bundles:0, tons:0, pieces:0, start:new Date(b.date), end:new Date(b.date) }; cur._lenMap.set(b.length, lr); }
+      lr.bundles++; lr.tons += b.tons; lr.pieces += b.pieces;
+      if(b.date < lr.start) lr.start = new Date(b.date);
+      if(b.date > lr.end) lr.end = new Date(b.date);
+    } else {
+      if(cur) raw.push(cur);
+      cur = {
         key, mill: b.mill,
         productId: b.productId, product: b.product,
         grade: b.grade, disposition: b.disposition,
         start: new Date(b.date), end: new Date(b.date),
-        bundles: 0, tons: 0, pieces: 0,
-        _heats: new Set(), _crews: new Set(),
-        _lenMap: new Map(),
-        subRollings: []
+        bundles: 1, tons: b.tons, pieces: b.pieces,
+        _heats: new Set([b.heat]), _crews: new Set([b.crew]),
+        _lenMap: new Map([[b.length, { length:b.length, bundles:1, tons:b.tons, pieces:b.pieces, start:new Date(b.date), end:new Date(b.date) }]])
       };
-      map.set(key, c);
-    }
-    if(b.date < c.start) c.start = new Date(b.date);
-    if(b.date > c.end) c.end = new Date(b.date);
-    c.bundles++;
-    c.tons += b.tons;
-    c.pieces += b.pieces;
-    c._heats.add(b.heat);
-    c._crews.add(b.crew);
-
-    // length aggregation
-    let lr = c._lenMap.get(b.length);
-    if(!lr){
-      lr = { length:b.length, bundles:0, tons:0, pieces:0, start:new Date(b.date), end:new Date(b.date) };
-      c._lenMap.set(b.length, lr);
-    }
-    lr.bundles++; lr.tons += b.tons; lr.pieces += b.pieces;
-    if(b.date < lr.start) lr.start = new Date(b.date);
-    if(b.date > lr.end) lr.end = new Date(b.date);
-
-    // sub-rolling = contiguous time block within this campaign.
-    // A new sub-rolling opens whenever we see this campaign right after a different campaign.
-    if(lastKey !== key){
-      c.subRollings.push({ start:new Date(b.date), end:new Date(b.date), bundles:1, tons:b.tons, pieces:b.pieces });
-      lastKey = key;
-    } else {
-      const sr = c.subRollings[c.subRollings.length-1];
-      sr.end = new Date(b.date);
-      sr.bundles++; sr.tons += b.tons; sr.pieces += b.pieces;
     }
   }
+  if(cur) raw.push(cur);
+
+  // Pass 2: merge same-key sessions whose gap is below threshold.
+  const merged = [];
+  const lastIdxByKey = {};
+  for(const s of raw){
+    const li = lastIdxByKey[s.key];
+    if(li != null){
+      const last = merged[li];
+      const gapH = (s.start - last.end) / 3600000;
+      if(gapH < gapMergeHours){
+        if(s.end > last.end) last.end = s.end;
+        last.bundles += s.bundles;
+        last.tons += s.tons;
+        last.pieces += s.pieces;
+        for(const h of s._heats) last._heats.add(h);
+        for(const c of s._crews) last._crews.add(c);
+        for(const [len, lr] of s._lenMap){
+          const ex = last._lenMap.get(len);
+          if(ex){
+            ex.bundles += lr.bundles; ex.tons += lr.tons; ex.pieces += lr.pieces;
+            if(lr.start < ex.start) ex.start = lr.start;
+            if(lr.end > ex.end) ex.end = lr.end;
+          } else last._lenMap.set(len, lr);
+        }
+        continue;
+      }
+    }
+    merged.push(s);
+    lastIdxByKey[s.key] = merged.length - 1;
+  }
+
+  // Pass 3: compute days-since-last-session-of-same-key, then finalize.
+  const lastEndByKey = {};
   const out = [];
-  for(const c of map.values()){
-    c.heats = c._heats.size; delete c._heats;
-    c.crews = Array.from(c._crews).filter(Boolean).join(','); delete c._crews;
-    c.lengthBreakdown = Array.from(c._lenMap.values()).sort((a,b)=>b.tons-a.tons);
-    c.lengthCount = c.lengthBreakdown.length;
-    delete c._lenMap;
-    c.subRollings.forEach(s => { s.hours = (s.end - s.start)/3600000; });
-    c.hours = c.subRollings.reduce((a,s)=>a+s.hours, 0);     // active rolling hours
-    c.spanHours = (c.end - c.start)/3600000;                  // calendar span
-    c.subCount = c.subRollings.length;
-    out.push(c);
+  for(const s of merged){
+    const prev = lastEndByKey[s.key] || null;
+    s.prevEnd = prev ? new Date(prev) : null;
+    s.gapDays = prev ? (s.start - prev) / 86400000 : null;
+    s.heats = s._heats.size; delete s._heats;
+    s.crews = Array.from(s._crews).filter(Boolean).join(','); delete s._crews;
+    s.hours = (s.end - s.start) / 3600000;
+    s.lengthBreakdown = Array.from(s._lenMap.values()).sort((a,b)=>b.tons-a.tons);
+    s.lengthCount = s.lengthBreakdown.length;
+    delete s._lenMap;
+    out.push(s);
+    lastEndByKey[s.key] = s.end;
   }
-  // Sort newest-end first by default
-  out.sort((a,b) => b.end - a.end);
   return out;
+}
+
+function fmtGapDays(d){
+  if(d == null) return '—';
+  if(d < 1) return (d*24).toFixed(1) + 'h';
+  if(d < 10) return d.toFixed(1) + 'd';
+  return Math.round(d) + 'd';
 }
 
 /* =====================================================================
@@ -1299,20 +1349,20 @@ function renderMillRuns(){
   const m1 = visible.filter(r=>r.mill==='1');
   const m2 = visible.filter(r=>r.mill==='2');
   const tonsPerHr = totalHours ? totalTons/totalHours : 0;
-  const totalSubs = visible.reduce((a,r)=>a+r.subCount,0);
   const dates = visible.map(r=>r.start.getTime()).concat(visible.map(r=>r.end.getTime()));
   const minD = dates.length?new Date(Math.min(...dates)):null;
   const maxD = dates.length?new Date(Math.max(...dates)):null;
+  const uniqProds = new Set(visible.map(r=>r.productId)).size;
   document.getElementById('runsKpis').innerHTML = `
     <div class="kpi green"><h3>Campaigns</h3><div class="val">${fmt0(visible.length)}</div><div class="sub">Mill 1: ${fmt0(m1.length)} · Mill 2: ${fmt0(m2.length)}</div></div>
     <div class="kpi green"><h3>Total Tons</h3><div class="val">${fmt0(totalTons)}<small>tons</small></div><div class="sub">Mill 1: ${fmt0(m1.reduce((a,r)=>a+r.tons,0))} · Mill 2: ${fmt0(m2.reduce((a,r)=>a+r.tons,0))}</div></div>
-    <div class="kpi green"><h3>Active Rolling Hrs</h3><div class="val">${fmt0(totalHours)}<small>hrs</small></div><div class="sub">${fmt0(totalSubs)} contiguous runs across ${fmt0(visible.length)} campaigns</div></div>
-    <div class="kpi blue"><h3>Tons / Hour</h3><div class="val">${fmt1(tonsPerHr)}</div><div class="sub">overall throughput</div></div>
+    <div class="kpi green"><h3>Rolling Hours</h3><div class="val">${fmt0(totalHours)}<small>hrs</small></div><div class="sub">first start → last end per session</div></div>
+    <div class="kpi blue"><h3>Tons / Hour</h3><div class="val">${fmt1(tonsPerHr)}</div><div class="sub">${fmt0(uniqProds)} unique product IDs</div></div>
     <div class="kpi green"><h3>Date Range</h3><div class="val" style="font-size:18px">${minD?dstr(minD):'—'}</div><div class="sub">→ ${maxD?dstr(maxD):'—'}</div></div>
   `;
 
-  document.getElementById('ganttRange').textContent = visible.length ? `${dstr(minD)} → ${dstr(maxD)} · ${fmt0(visible.length)} campaigns / ${fmt0(totalSubs)} runs` : '';
-  document.getElementById('ganttSummary').innerHTML = `<b>${fmt0(visible.length)}</b> campaigns · <b>${fmt0(totalSubs)}</b> runs · <b>${fmt0(totalTons)}</b> tons · <b>${fmt0(totalHours)}</b> hrs`;
+  document.getElementById('ganttRange').textContent = visible.length ? `${dstr(minD)} → ${dstr(maxD)} · ${fmt0(visible.length)} campaigns` : '';
+  document.getElementById('ganttSummary').innerHTML = `<b>${fmt0(visible.length)}</b> campaigns · <b>${fmt0(totalTons)}</b> tons · <b>${fmt0(totalHours)}</b> hrs`;
 
   const mode = STATE.filters.ganttMode || 'timeline';
   if(mode === 'calendar'){
@@ -1342,8 +1392,8 @@ function renderMillRuns(){
       <th style="width:28px"></th>
       <th>Mill</th><th>Product ID</th><th>Grade</th><th>Disp.</th>
       <th>Lengths</th>
-      <th>First Run</th><th>Last Run</th>
-      <th class="num">Hours</th><th class="num">Runs</th>
+      <th>Start</th><th>End</th>
+      <th class="num">Hours</th><th class="num">Days Since Last</th>
       <th class="num">Bundles</th><th class="num">Tons</th><th class="num">Heats</th><th>Crew(s)</th>
     </tr></thead>
     <tbody>${showSlice.map((r,i)=>{
@@ -1352,8 +1402,9 @@ function renderMillRuns(){
         (r.lengthCount === 1
           ? mmToFtIn(dom.length)
           : `${mmToFtIn(dom.length)} <span style="color:var(--gray-500)">+ ${r.lengthCount-1} more</span>`);
-      const expandable = (r.lengthBreakdown||[]).length > 0 || (r.subRollings||[]).length > 0;
+      const expandable = (r.lengthBreakdown||[]).length > 0;
       const colorChip = pidColors[r.productId] || '#7f8c8d';
+      const gapStr = r.gapDays==null ? '<span style="color:var(--gray-500)">first run</span>' : fmtGapDays(r.gapDays);
       return `
       <tr class="r-row" data-i="${i}">
         <td>${expandable?`<button class="exp-btn" data-i="${i}" aria-label="Expand">▶</button>`:''}</td>
@@ -1365,7 +1416,7 @@ function renderMillRuns(){
         <td>${r.start.toISOString().slice(0,16).replace('T',' ')}</td>
         <td>${r.end.toISOString().slice(0,16).replace('T',' ')}</td>
         <td class="num">${fmt1(r.hours)}</td>
-        <td class="num">${fmt0(r.subCount)}</td>
+        <td class="num">${gapStr}</td>
         <td class="num">${fmt0(r.bundles)}</td>
         <td class="num">${fmt1(r.tons)}</td>
         <td class="num">${fmt0(r.heats)}</td>
@@ -1374,11 +1425,11 @@ function renderMillRuns(){
       <tr class="r-detail" data-i="${i}" style="display:none">
         <td></td>
         <td colspan="13" style="background:var(--gray-50);padding:10px 14px">
-          <div style="font-size:11px;color:var(--gray-500);letter-spacing:1px;font-weight:700;text-transform:uppercase;margin-bottom:6px">Length Breakdown — ${fmt0(r.lengthCount)} length${r.lengthCount===1?'':'s'} run in this campaign</div>
+          <div style="font-size:11px;color:var(--gray-500);letter-spacing:1px;font-weight:700;text-transform:uppercase;margin-bottom:6px">Length Breakdown — ${fmt0(r.lengthCount)} length${r.lengthCount===1?'':'s'} run in this session</div>
           <table class="length-detail" style="background:#fff">
             <thead><tr>
               <th>Length</th><th class="num">mm</th>
-              <th class="num">Bundles</th><th class="num">Pieces</th><th class="num">Tons</th><th class="num">% of campaign</th>
+              <th class="num">Bundles</th><th class="num">Pieces</th><th class="num">Tons</th><th class="num">% of session</th>
               <th>First</th><th>Last</th>
             </tr></thead>
             <tbody>${(r.lengthBreakdown||[]).map(l => `
@@ -1391,20 +1442,6 @@ function renderMillRuns(){
                 <td class="num">${r.tons?Math.round(l.tons/r.tons*100):0}%</td>
                 <td>${l.start ? l.start.toISOString().slice(0,16).replace('T',' ') : '—'}</td>
                 <td>${l.end ? l.end.toISOString().slice(0,16).replace('T',' ') : '—'}</td>
-              </tr>`).join('')}
-            </tbody>
-          </table>
-          <div style="font-size:11px;color:var(--gray-500);letter-spacing:1px;font-weight:700;text-transform:uppercase;margin:14px 0 6px">Contiguous Runs — ${fmt0(r.subCount)} session${r.subCount===1?'':'s'} on the mill</div>
-          <table class="length-detail" style="background:#fff">
-            <thead><tr><th class="num">#</th><th>Start</th><th>End</th><th class="num">Hours</th><th class="num">Bundles</th><th class="num">Tons</th></tr></thead>
-            <tbody>${(r.subRollings||[]).map((s,si) => `
-              <tr>
-                <td class="num">${si+1}</td>
-                <td>${s.start.toISOString().slice(0,16).replace('T',' ')}</td>
-                <td>${s.end.toISOString().slice(0,16).replace('T',' ')}</td>
-                <td class="num">${fmt1(s.hours)}</td>
-                <td class="num">${fmt0(s.bundles)}</td>
-                <td class="num">${fmt1(s.tons)}</td>
               </tr>`).join('')}
             </tbody>
           </table>
@@ -1465,7 +1502,10 @@ function renderMillRuns(){
 function renderGantt(rollings, minD, maxD, pidColors){
   const wrap = document.getElementById('ganttWrap');
   const svg = document.getElementById('ganttSvg');
+  const cal = document.getElementById('ganttCalendar');
   const tip = document.getElementById('ganttTip');
+  svg.style.display = 'block';
+  if(cal) cal.style.display = 'none';
   if(!rollings.length || !minD || !maxD){
     svg.innerHTML = ''; svg.setAttribute('width','100%'); svg.setAttribute('height','60');
     return;
@@ -1502,30 +1542,26 @@ function renderGantt(rollings, minD, maxD, pidColors){
     html += `<line class="axis-tick" x1="${x}" y1="${PAD_T}" x2="${x}" y2="${H-PAD_B}" />`;
     html += `<text class="axis-label" x="${x}" y="${H-PAD_B+14}" text-anchor="middle">${tickFmt(t)}</text>`;
   }
-  // One bar per contiguous sub-rolling. Colors come from the product-ID
-  // palette so every run of "1REBAR 04-60" lands on the same color, regardless
-  // of how many times the campaign was interrupted.
+  // One bar per session (campaign). Colors come from the product-ID palette
+  // so every session of "1REBAR 04-60" lands on the same color regardless of
+  // when it ran.
   for(const r of rollings){
     const fill = (pidColors && pidColors[r.productId]) || PRODUCT_COLORS[r.product] || '#7f8c8d';
     const sel = STATE.filters.rollingKeyFilter === r.key ? ';stroke:#000;stroke-width:2' : '';
     const lenCount = r.lengthCount || (r.lengthBreakdown ? r.lengthBreakdown.length : 0);
     const dom = r.lengthBreakdown && r.lengthBreakdown[0];
     const lenLabel = !dom ? '—' : (lenCount===1 ? mmToFtIn(dom.length) : `${mmToFtIn(dom.length)} + ${lenCount-1} more`);
-    const subs = (r.subRollings && r.subRollings.length) ? r.subRollings : [{start:r.start, end:r.end, hours:r.hours, bundles:r.bundles, tons:r.tons}];
-    for(const s of subs){
-      const x1 = xOf(s.start.getTime());
-      const x2 = Math.max(x1+1, xOf(s.end.getTime()));
-      const y = laneY(r.mill) + 8;
-      const h = LANE_H - 16;
-      html += `<rect class="bar" x="${x1}" y="${y}" width="${x2-x1}" height="${h}" fill="${fill}" style="opacity:.88${sel}"
-                data-key="${esc(r.key)}" data-mill="${r.mill}"
-                data-pid="${esc(r.productId)}" data-grade="${esc(r.grade)}" data-len="${esc(lenLabel)}" data-disp="${esc(r.disposition)}"
-                data-start="${s.start.toISOString()}" data-end="${s.end.toISOString()}"
-                data-tons="${s.tons.toFixed(2)}" data-hours="${s.hours.toFixed(1)}" data-bundles="${s.bundles}"
-                data-cs="${r.start.toISOString()}" data-ce="${r.end.toISOString()}"
-                data-ctons="${r.tons.toFixed(2)}" data-chours="${r.hours.toFixed(1)}" data-cbundles="${r.bundles}" data-csubs="${r.subCount}" data-cheats="${r.heats}"
-              />`;
-    }
+    const x1 = xOf(r.start.getTime());
+    const x2 = Math.max(x1+1, xOf(r.end.getTime()));
+    const y = laneY(r.mill) + 8;
+    const h = LANE_H - 16;
+    html += `<rect class="bar" x="${x1}" y="${y}" width="${x2-x1}" height="${h}" fill="${fill}" style="opacity:.88${sel}"
+              data-key="${esc(r.key)}" data-mill="${r.mill}"
+              data-pid="${esc(r.productId)}" data-grade="${esc(r.grade)}" data-len="${esc(lenLabel)}" data-disp="${esc(r.disposition)}"
+              data-start="${r.start.toISOString()}" data-end="${r.end.toISOString()}"
+              data-tons="${r.tons.toFixed(2)}" data-hours="${r.hours.toFixed(1)}" data-bundles="${r.bundles}"
+              data-heats="${r.heats}" data-gap="${r.gapDays==null?'':r.gapDays.toFixed(2)}"
+            />`;
   }
   svg.setAttribute('width', W);
   svg.setAttribute('height', H);
@@ -1536,14 +1572,12 @@ function renderGantt(rollings, minD, maxD, pidColors){
   svg.querySelectorAll('rect.bar').forEach(rect => {
     rect.addEventListener('mouseenter', e => {
       const d = e.target.dataset;
+      const gap = d.gap === '' ? null : Number(d.gap);
       tip.innerHTML = `<b>Mill ${d.mill} · ${esc(d.pid)}</b><br>
         Grade: ${esc(d.grade)} · Disp: ${esc(d.disp)} · Lengths: ${esc(d.len)}<br>
-        <span style="color:#bdc3c7;font-size:11px">— THIS RUN —</span><br>
         ${d.start.slice(0,16).replace('T',' ')} → ${d.end.slice(0,16).replace('T',' ')}<br>
-        <b>${fmt1(Number(d.tons))} tons</b> · ${fmt1(Number(d.hours))} hrs · ${fmt0(Number(d.bundles))} bundles<br>
-        <span style="color:#bdc3c7;font-size:11px">— CAMPAIGN TOTAL —</span><br>
-        ${d.cs.slice(0,10)} → ${d.ce.slice(0,10)}<br>
-        <b>${fmt1(Number(d.ctons))} tons</b> across ${fmt0(Number(d.csubs))} runs · ${fmt1(Number(d.chours))} hrs · ${fmt0(Number(d.cbundles))} bundles · ${fmt0(Number(d.cheats))} heats`;
+        <b>${fmt1(Number(d.tons))} tons</b> · ${fmt1(Number(d.hours))} hrs · ${fmt0(Number(d.bundles))} bundles · ${fmt0(Number(d.heats))} heats<br>
+        <span style="color:#bdc3c7;font-size:11px">Gap since previous run of this product:</span> <b>${fmtGapDays(gap)}</b>`;
       tip.style.display = 'block';
     });
     rect.addEventListener('mousemove', e => {
@@ -1560,155 +1594,177 @@ function renderGantt(rollings, minD, maxD, pidColors){
   });
 }
 
-/* Calendar mode: each row = one fiscal week × mill, x axis = 7 days
-   (Sun→Sat). Bars are sub-rollings (split at week boundaries) colored by
-   Product ID, so the user can scan the year week-by-week and see which
-   products were rolled. */
+/* Calendar mode: traditional month-grid layout (Sun→Sat columns).
+   Each day cell is colored by the dominant session that ran that day on the
+   selected mill, with the product ID and tons stamped on the cell. Multi-
+   day sessions naturally fill multiple cells with the same color/label
+   (since each of those days is dominated by that session). Empty days stay
+   white. Click a day to filter the rolling table to its session. */
 function renderGanttCalendar(rollings, pidColors){
-  const wrap = document.getElementById('ganttWrap');
   const svg = document.getElementById('ganttSvg');
+  const cal = document.getElementById('ganttCalendar');
   const tip = document.getElementById('ganttTip');
-  if(!rollings.length){ svg.innerHTML=''; svg.setAttribute('width','100%'); svg.setAttribute('height','60'); return; }
+  svg.style.display = 'none';
+  cal.style.display = 'block';
+  if(!rollings.length){ cal.innerHTML = '<div style="padding:30px;color:var(--gray-500)">No rollings in window.</div>'; return; }
 
-  // 1. Group sub-rollings by (mill, fiscal week)
-  const rowMap = new Map();
-  for(const r of rollings){
-    const subs = (r.subRollings && r.subRollings.length) ? r.subRollings : [{start:r.start,end:r.end,tons:r.tons,bundles:r.bundles,hours:r.hours}];
-    for(const s of subs){
-      for(const seg of splitSubAtWeekBoundaries(s)){
-        const key = r.mill + '|' + seg.weekKey;
-        if(!rowMap.has(key)){
-          rowMap.set(key, { mill: r.mill, weekKey: seg.weekKey, week: seg.week, runs: [] });
-        }
-        rowMap.get(key).runs.push({
-          start: seg.start, end: seg.end,
-          tons: seg.tons, hours: seg.hours, bundles: seg.bundles,
-          campaignKey: r.key, productId: r.productId, product: r.product,
-          grade: r.grade, disposition: r.disposition,
-          campaignTons: r.tons, campaignHours: r.hours, campaignBundles: r.bundles, campaignSubs: r.subCount, campaignHeats: r.heats,
-          lengthCount: r.lengthCount,
-          domLen: r.lengthBreakdown && r.lengthBreakdown[0] ? r.lengthBreakdown[0].length : null
+  // Choose mill to render (if both have data, allow toggle)
+  const millsWithData = Array.from(new Set(rollings.map(r => r.mill))).sort();
+  let curMill = STATE.filters.calMill;
+  if(!curMill || !millsWithData.includes(curMill)) curMill = millsWithData[0];
+
+  // For the chosen mill, build dayMap: YYYY-MM-DD → [{run, hours-on-this-day}, ...]
+  const millRolls = rollings.filter(r => r.mill === curMill);
+  const dayMap = {};
+  for(const r of millRolls){
+    let cursor = new Date(r.start.getFullYear(), r.start.getMonth(), r.start.getDate());
+    const endMs = r.end.getTime();
+    while(cursor.getTime() <= endMs){
+      const dayStartMs = cursor.getTime();
+      const dayEndMs = dayStartMs + 86399999;
+      const overlapStart = Math.max(r.start.getTime(), dayStartMs);
+      const overlapEnd = Math.min(endMs, dayEndMs);
+      const hrs = (overlapEnd - overlapStart) / 3600000;
+      if(hrs > 0){
+        const k = dstr(cursor);
+        if(!dayMap[k]) dayMap[k] = [];
+        dayMap[k].push({
+          rolling: r,
+          hoursToday: hrs,
+          tonsToday: r.hours ? r.tons * (hrs/r.hours) : 0
         });
       }
+      cursor = new Date(cursor.getTime() + 86400000);
     }
   }
+  for(const k in dayMap) dayMap[k].sort((a,b) => b.hoursToday - a.hoursToday);
 
-  // 2. Ensure all weeks between min and max are present (so empty weeks still render)
-  const allWeekStarts = Array.from(rowMap.values()).map(r => r.week.start.getTime());
-  const minWk = Math.min(...allWeekStarts);
-  const maxWk = Math.max(...allWeekStarts);
-  const fillKeys = new Set();
-  for(let t = minWk; t <= maxWk; t += 7*86400000){
-    const fw = fiscalWeek(new Date(t));
-    fillKeys.add('FY'+fw.year+'-W'+String(fw.wk).padStart(2,'0'));
-  }
-  const millsWithData = Array.from(new Set(Array.from(rowMap.values()).map(r => r.mill))).sort();
-  for(const wkKey of fillKeys){
+  // Determine month range
+  const allDates = [];
+  for(const r of millRolls){ allDates.push(r.start); allDates.push(r.end); }
+  const minD = new Date(Math.min(...allDates.map(d=>d.getTime())));
+  const maxD = new Date(Math.max(...allDates.map(d=>d.getTime())));
+  const firstMonth = new Date(minD.getFullYear(), minD.getMonth(), 1);
+  const lastMonth = new Date(maxD.getFullYear(), maxD.getMonth(), 1);
+
+  const monthShort = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  const monthLong = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+  const dows = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+  const todayKey = dstr(today());
+
+  // Mill toggle (only if both have data)
+  let html = '';
+  if(millsWithData.length > 1){
+    html += '<div class="calmill-controls"><span class="label" style="color:var(--gray-500);font-size:11px;letter-spacing:1px;font-weight:700;text-transform:uppercase;margin-right:6px">Mill:</span>';
     for(const m of millsWithData){
-      const k = m + '|' + wkKey;
-      if(!rowMap.has(k)){
-        // derive week from first row with same key
-        let fw = null;
-        for(const v of rowMap.values()){ if(v.weekKey === wkKey){ fw = v.week; break; } }
-        if(!fw){
-          // compute from key (rare)
-          const wkNum = Number(wkKey.slice(-2));
-          const yr = Number(wkKey.slice(2,6));
-          const ms = FY26_W1.getTime() + (yr-2026)*52*7*86400000 + (wkNum-1)*7*86400000;
-          const start = new Date(ms);
-          fw = { wk: wkNum, year: yr, start, end: new Date(start.getTime()+7*86400000-1) };
-        }
-        rowMap.set(k, { mill: m, weekKey: wkKey, week: fw, runs: [] });
+      html += `<button class="chip ${m===curMill?'active':''}" data-cmill="${m}">Mill ${m}</button>`;
+    }
+    html += '</div>';
+  }
+
+  // For each month from firstMonth..lastMonth, render a calendar grid
+  let m = new Date(firstMonth);
+  while(m <= lastMonth){
+    const year = m.getFullYear();
+    const mon = m.getMonth();
+    const firstOfMonth = new Date(year, mon, 1);
+    const daysInMonth = new Date(year, mon+1, 0).getDate();
+    const startDow = firstOfMonth.getDay(); // 0..6
+    const totalCells = Math.ceil((startDow + daysInMonth)/7) * 7;
+
+    // Month-level totals
+    let mTons = 0, mHours = 0, mDays = 0;
+    for(let dnum=1; dnum<=daysInMonth; dnum++){
+      const k = dstr(new Date(year, mon, dnum));
+      if(dayMap[k]){
+        mDays++;
+        for(const e of dayMap[k]){ mTons += e.tonsToday; mHours += e.hoursToday; }
       }
     }
-  }
 
-  // 3. Sort rows
-  const rows = Array.from(rowMap.values()).sort((a,b) =>
-    a.week.start - b.week.start || a.mill.localeCompare(b.mill)
-  );
+    html += `<div class="cal-month">
+      <div class="cal-title"><span>${monthLong[mon]} ${year} — Mill ${curMill}</span>
+        <span class="meta">${fmt0(mDays)} active days · ${fmt0(mHours)} rolling hrs · ${fmt0(mTons)} tons</span></div>
+      <div class="cal-grid">`;
+    for(const d of dows) html += `<div class="cal-head">${d}</div>`;
 
-  // 4. Layout
-  const W = Math.max(900, wrap.clientWidth - 24);
-  const PAD_L = 200, PAD_R = 16, PAD_T = 38, PAD_B = 12;
-  const ROW_H = 28;
-  const innerW = W - PAD_L - PAD_R;
-  const dayW = innerW / 7;
-  const H = PAD_T + rows.length * ROW_H + PAD_B;
-
-  let html = '';
-  // Day-of-week header
-  const dows = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
-  for(let i=0;i<7;i++){
-    const x = PAD_L + i*dayW;
-    html += `<rect x="${x}" y="${PAD_T-26}" width="${dayW}" height="22" fill="${i%2===0?'#f0f3f1':'#e6ebe8'}" />`;
-    html += `<text class="axis-label" x="${x + dayW/2}" y="${PAD_T-10}" text-anchor="middle" style="font-size:11px;font-weight:700;fill:var(--gray-700)">${dows[i]}</text>`;
-  }
-
-  // Rows
-  for(let i=0;i<rows.length;i++){
-    const row = rows[i];
-    const y = PAD_T + i*ROW_H;
-    // Row background — alternate for readability; tint when fiscal month changes
-    const bg = (i%2===0) ? '#fcfdfc' : '#f4f6f5';
-    html += `<rect x="0" y="${y}" width="${W}" height="${ROW_H}" fill="${bg}" />`;
-    // Label area
-    const monthShort = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][row.week.start.getMonth()];
-    html += `<text x="10" y="${y+ROW_H/2+4}" style="font-size:12px;font-weight:700;fill:var(--gray-700)">W${String(row.week.wk).padStart(2,'0')}</text>`;
-    html += `<text x="44" y="${y+ROW_H/2+4}" style="font-size:11px;fill:var(--gray-500)">${monthShort} ${row.week.start.getDate()}–${row.week.end.getDate()}</text>`;
-    html += `<text x="142" y="${y+ROW_H/2+4}" style="font-size:11px;font-weight:700;fill:var(--green-d)">Mill ${row.mill}</text>`;
-    // Day grid lines
-    for(let dx=0;dx<=7;dx++){
-      html += `<line x1="${PAD_L+dx*dayW}" y1="${y}" x2="${PAD_L+dx*dayW}" y2="${y+ROW_H}" stroke="#e0e3e1" stroke-width="${dx===0||dx===7?1:0.5}" />`;
+    for(let i=0;i<totalCells;i++){
+      const dnum = i - startDow + 1;
+      if(dnum < 1 || dnum > daysInMonth){
+        html += '<div class="cal-cell outside"></div>';
+        continue;
+      }
+      const date = new Date(year, mon, dnum);
+      const k = dstr(date);
+      const fw = fiscalWeek(date);
+      const wkLbl = 'W' + String(fw.wk).padStart(2,'0');
+      const cellTodayCls = (k === todayKey) ? ' today' : '';
+      const entries = dayMap[k];
+      if(!entries || !entries.length){
+        html += `<div class="cal-cell${cellTodayCls}"><span class="wk">${wkLbl}</span><span class="date">${dnum}</span></div>`;
+        continue;
+      }
+      const top = entries[0];
+      const r = top.rolling;
+      const fill = (pidColors && pidColors[r.productId]) || PRODUCT_COLORS[r.product] || '#7f8c8d';
+      const selCls = STATE.filters.rollingKeyFilter === r.key ? ' selected' : '';
+      const moreN = entries.length - 1;
+      const tonsToday = entries.reduce((a,e)=>a+e.tonsToday,0);
+      const hoursToday = entries.reduce((a,e)=>a+e.hoursToday,0);
+      const lenLabel = r.lengthBreakdown && r.lengthBreakdown[0]
+        ? (r.lengthCount===1 ? mmToFtIn(r.lengthBreakdown[0].length) : mmToFtIn(r.lengthBreakdown[0].length)+' +'+(r.lengthCount-1))
+        : '';
+      html += `<div class="cal-cell has-data${cellTodayCls}${selCls}" data-key="${esc(r.key)}" data-day="${k}"
+                  data-pid="${esc(r.productId)}" data-grade="${esc(r.grade)}" data-disp="${esc(r.disposition)}"
+                  data-len="${esc(lenLabel)}"
+                  data-tons-today="${tonsToday.toFixed(1)}" data-hours-today="${hoursToday.toFixed(1)}"
+                  data-rstart="${r.start.toISOString()}" data-rend="${r.end.toISOString()}"
+                  data-rtons="${r.tons.toFixed(1)}" data-rhours="${r.hours.toFixed(1)}" data-rbundles="${r.bundles}"
+                  data-gap="${r.gapDays==null?'':r.gapDays.toFixed(2)}">
+        <span class="wk">${wkLbl}</span>
+        <span class="date">${dnum}</span>
+        <div class="label" style="background:${fill}">
+          <span class="pid">${esc(r.productId)}</span>
+          <span class="meta">${fmt0(tonsToday)}t · ${fmt1(hoursToday)}h${lenLabel?(' · '+lenLabel):''}</span>
+        </div>
+        ${moreN>0?`<span class="more">+${moreN}</span>`:''}
+      </div>`;
     }
-    // Bars within the row
-    for(const run of row.runs){
-      // x position based on hours from week start
-      const wsMs = row.week.start.getTime();
-      const sFrac = Math.max(0, (run.start.getTime() - wsMs) / (7*86400000));
-      const eFrac = Math.min(1, (run.end.getTime() - wsMs) / (7*86400000));
-      const x1 = PAD_L + sFrac * innerW;
-      const x2 = Math.max(x1+1, PAD_L + eFrac * innerW);
-      const fill = (pidColors && pidColors[run.productId]) || PRODUCT_COLORS[run.product] || '#7f8c8d';
-      const sel = STATE.filters.rollingKeyFilter === run.campaignKey ? ';stroke:#000;stroke-width:1.5' : '';
-      const lenLabel = run.domLen ? (run.lengthCount===1 ? mmToFtIn(run.domLen) : mmToFtIn(run.domLen)+' + '+(run.lengthCount-1)+' more') : '—';
-      html += `<rect class="bar" x="${x1}" y="${y+4}" width="${x2-x1}" height="${ROW_H-8}" fill="${fill}" style="opacity:.92${sel}"
-        data-key="${esc(run.campaignKey)}" data-mill="${row.mill}"
-        data-pid="${esc(run.productId)}" data-grade="${esc(run.grade)}" data-len="${esc(lenLabel)}" data-disp="${esc(run.disposition)}"
-        data-start="${run.start.toISOString()}" data-end="${run.end.toISOString()}"
-        data-tons="${run.tons.toFixed(2)}" data-hours="${run.hours.toFixed(1)}" data-bundles="${run.bundles}"
-        data-cs="${run.start.toISOString()}" data-ce="${run.end.toISOString()}"
-        data-ctons="${(run.campaignTons||0).toFixed(2)}" data-chours="${(run.campaignHours||0).toFixed(1)}" data-cbundles="${run.campaignBundles||0}" data-csubs="${run.campaignSubs||0}" data-cheats="${run.campaignHeats||0}"
-        />`;
-    }
+    html += '</div></div>';
+    m = new Date(year, mon+1, 1);
   }
 
-  svg.setAttribute('width', W);
-  svg.setAttribute('height', H);
-  svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
-  svg.innerHTML = html;
+  cal.innerHTML = html;
 
-  // Tooltip + click — same shape as the timeline view
-  svg.querySelectorAll('rect.bar').forEach(rect => {
-    rect.addEventListener('mouseenter', e => {
-      const d = e.target.dataset;
-      tip.innerHTML = `<b>Mill ${d.mill} · ${esc(d.pid)}</b><br>
-        Grade: ${esc(d.grade)} · Disp: ${esc(d.disp)} · Lengths: ${esc(d.len)}<br>
-        <span style="color:#bdc3c7;font-size:11px">— THIS RUN —</span><br>
-        ${d.start.slice(0,16).replace('T',' ')} → ${d.end.slice(0,16).replace('T',' ')}<br>
-        <b>${fmt1(Number(d.tons))} tons</b> · ${fmt1(Number(d.hours))} hrs · ${fmt0(Number(d.bundles))} bundles<br>
-        <span style="color:#bdc3c7;font-size:11px">— CAMPAIGN TOTAL —</span><br>
-        <b>${fmt1(Number(d.ctons))} tons</b> across ${fmt0(Number(d.csubs))} runs · ${fmt1(Number(d.chours))} hrs · ${fmt0(Number(d.cbundles))} bundles`;
+  // Wire mill chips
+  cal.querySelectorAll('.chip[data-cmill]').forEach(c => c.addEventListener('click', () => {
+    STATE.filters.calMill = c.dataset.cmill;
+    saveState(); renderMillRuns();
+  }));
+
+  // Cell hover/click
+  cal.querySelectorAll('.cal-cell.has-data').forEach(cell => {
+    cell.addEventListener('mouseenter', e => {
+      const d = e.currentTarget.dataset;
+      const gap = d.gap === '' ? null : Number(d.gap);
+      tip.innerHTML = `<b>${esc(d.pid)}</b> · Mill ${curMill}<br>
+        ${esc(d.day)} · Grade: ${esc(d.grade)} · Disp: ${esc(d.disp)}${d.len?' · Lengths: '+esc(d.len):''}<br>
+        <span style="color:#bdc3c7;font-size:11px">— THIS DAY —</span><br>
+        <b>${fmt1(Number(d.tonsToday))} tons</b> · ${fmt1(Number(d.hoursToday))} hrs<br>
+        <span style="color:#bdc3c7;font-size:11px">— FULL SESSION —</span><br>
+        ${d.rstart.slice(0,16).replace('T',' ')} → ${d.rend.slice(0,16).replace('T',' ')}<br>
+        <b>${fmt1(Number(d.rtons))} tons</b> · ${fmt1(Number(d.rhours))} hrs · ${fmt0(Number(d.rbundles))} bundles<br>
+        <span style="color:#bdc3c7;font-size:11px">Days since previous run of this product:</span> <b>${fmtGapDays(gap)}</b>`;
       tip.style.display = 'block';
     });
-    rect.addEventListener('mousemove', e => {
-      const r = wrap.getBoundingClientRect();
+    cell.addEventListener('mousemove', e => {
+      const r = document.getElementById('ganttWrap').getBoundingClientRect();
       tip.style.left = (e.clientX - r.left + 12) + 'px';
       tip.style.top = (e.clientY - r.top + 12) + 'px';
     });
-    rect.addEventListener('mouseleave', () => { tip.style.display='none'; });
-    rect.addEventListener('click', () => {
-      const k = rect.dataset.key;
+    cell.addEventListener('mouseleave', () => { tip.style.display='none'; });
+    cell.addEventListener('click', () => {
+      const k = cell.dataset.key;
       STATE.filters.rollingKeyFilter = STATE.filters.rollingKeyFilter === k ? null : k;
       renderMillRuns();
     });
@@ -2206,8 +2262,8 @@ document.getElementById('fileRestore').addEventListener('change', e => {
       ...r,
       start: r.start?new Date(r.start):null,
       end: r.end?new Date(r.end):null,
-      lengthBreakdown: (r.lengthBreakdown||[]).map(l => ({...l, start: l.start?new Date(l.start):null, end: l.end?new Date(l.end):null})),
-      subRollings: (r.subRollings||[]).map(s => ({...s, start: s.start?new Date(s.start):null, end: s.end?new Date(s.end):null}))
+      prevEnd: r.prevEnd?new Date(r.prevEnd):null,
+      lengthBreakdown: (r.lengthBreakdown||[]).map(l => ({...l, start: l.start?new Date(l.start):null, end: l.end?new Date(l.end):null}))
     }));
       STATE.rollings = { '1': reviveRoll(s.rollings && s.rollings['1']), '2': reviveRoll(s.rollings && s.rollings['2']) };
       STATE.millBundles = { '1': [], '2': [] };
