@@ -433,7 +433,8 @@ function loadState(){
       ...r,
       start: r.start?new Date(r.start):null,
       end: r.end?new Date(r.end):null,
-      lengthBreakdown: (r.lengthBreakdown||[]).map(l => ({...l, start: l.start?new Date(l.start):null, end: l.end?new Date(l.end):null}))
+      lengthBreakdown: (r.lengthBreakdown||[]).map(l => ({...l, start: l.start?new Date(l.start):null, end: l.end?new Date(l.end):null})),
+      subRollings: (r.subRollings||[]).map(s => ({...s, start: s.start?new Date(s.start):null, end: s.end?new Date(s.end):null}))
     }));
     STATE.rollings = { '1': reviveRoll(s.rollings && s.rollings['1']), '2': reviveRoll(s.rollings && s.rollings['2']) };
     return true;
@@ -500,6 +501,26 @@ function classifyProductId(pid){
 }
 const PRODUCT_COLORS = { REBAR:'#006b3f', 'HR-MBQ':'#d68910', 'EB-SBQ':'#7d3c98', BILLETS:'#2874a6', OTHER:'#7f8c8d' };
 const PRODUCT_LABEL = { REBAR:'Rebar', 'HR-MBQ':'MBQ', 'EB-SBQ':'EB (SBQ)', BILLETS:'Billets', OTHER:'Other' };
+
+/* Distinct colors for individual Product IDs on the Gantt. The most-rolled
+   product (by total tons) gets the first color, and so on; same product ID
+   always lands on the same color within a session. */
+const PID_PALETTE = [
+  '#006b3f','#d68910','#2874a6','#7d3c98','#c0392b',
+  '#16a085','#e67e22','#34495e','#1abc9c','#27ae60',
+  '#f39c12','#8e44ad','#a04000','#2c3e50','#e74c3c',
+  '#3498db','#9b59b6','#5d6d7e','#138d75','#cd6155',
+  '#5b2c6f','#7d6608','#0e6251','#7e5109','#0b5345',
+  '#641e16','#1b4f72','#4a235a','#7b7d7d','#196f3d'
+];
+function buildProductIdColors(rollings){
+  const tons = {};
+  for(const r of rollings) tons[r.productId] = (tons[r.productId]||0) + r.tons;
+  const sorted = Object.keys(tons).sort((a,b) => tons[b] - tons[a]);
+  const map = {};
+  sorted.forEach((pid, i) => { map[pid] = PID_PALETTE[i % PID_PALETTE.length]; });
+  return map;
+}
 
 function classifyMode(shipMethod, carrier){
   const s = ((shipMethod||'')+' '+(carrier||'')).toUpperCase();
@@ -829,55 +850,75 @@ function parseMillRuns(rows, mill){
   return out;
 }
 
-/* Walk bundles in chronological order; a "rolling" is a contiguous block
-   sharing (productId, grade, disposition). The moment any of those three
-   changes, the current rolling closes and a new one opens. Per-length
-   sub-aggregates ride along on each rolling for drill-down. */
+/* A "rolling" (campaign) groups every bundle sharing
+   (mill, productId, grade, disposition), regardless of interruptions
+   from other products. Length variants and contiguous sub-runs ride
+   along on each campaign for drill-down. */
 function computeRollings(bundles){
   if(!bundles || !bundles.length) return [];
   const sorted = [...bundles].sort((a,b) => a.date - b.date);
-  const out = [];
-  let cur = null;
-  const finalize = c => {
-    c.heats = c._heats.size; delete c._heats;
-    c.crews = Array.from(c._crews).filter(Boolean).join(','); delete c._crews;
-    c.hours = (c.end - c.start)/3600000;
-    c.lengthBreakdown = Array.from(c._lenMap.values()).sort((a,b)=>b.tons-a.tons);
-    c.lengthCount = c.lengthBreakdown.length;
-    delete c._lenMap;
-    out.push(c);
-  };
+  const map = new Map();
+  let lastKey = null;
   for(const b of sorted){
-    const key = b.productId+'|'+b.grade+'|'+b.disposition;
-    if(cur && cur.key === key){
-      cur.bundles++;
-      cur.tons += b.tons;
-      cur.pieces += b.pieces;
-      if(b.date > cur.end) cur.end = b.date;
-      cur._heats.add(b.heat);
-      cur._crews.add(b.crew);
-      let lr = cur._lenMap.get(b.length);
-      if(!lr){
-        lr = { length:b.length, bundles:0, tons:0, pieces:0, start:new Date(b.date), end:new Date(b.date) };
-        cur._lenMap.set(b.length, lr);
-      }
-      lr.bundles++; lr.tons += b.tons; lr.pieces += b.pieces;
-      if(b.date < lr.start) lr.start = new Date(b.date);
-      if(b.date > lr.end) lr.end = new Date(b.date);
-    } else {
-      if(cur) finalize(cur);
-      cur = {
-        mill: b.mill, key,
+    const key = b.mill+'|'+b.productId+'|'+b.grade+'|'+b.disposition;
+    let c = map.get(key);
+    if(!c){
+      c = {
+        key, mill: b.mill,
         productId: b.productId, product: b.product,
         grade: b.grade, disposition: b.disposition,
         start: new Date(b.date), end: new Date(b.date),
-        bundles: 1, tons: b.tons, pieces: b.pieces,
-        _heats: new Set([b.heat]), _crews: new Set([b.crew]),
-        _lenMap: new Map([[b.length, { length:b.length, bundles:1, tons:b.tons, pieces:b.pieces, start:new Date(b.date), end:new Date(b.date) }]])
+        bundles: 0, tons: 0, pieces: 0,
+        _heats: new Set(), _crews: new Set(),
+        _lenMap: new Map(),
+        subRollings: []
       };
+      map.set(key, c);
+    }
+    if(b.date < c.start) c.start = new Date(b.date);
+    if(b.date > c.end) c.end = new Date(b.date);
+    c.bundles++;
+    c.tons += b.tons;
+    c.pieces += b.pieces;
+    c._heats.add(b.heat);
+    c._crews.add(b.crew);
+
+    // length aggregation
+    let lr = c._lenMap.get(b.length);
+    if(!lr){
+      lr = { length:b.length, bundles:0, tons:0, pieces:0, start:new Date(b.date), end:new Date(b.date) };
+      c._lenMap.set(b.length, lr);
+    }
+    lr.bundles++; lr.tons += b.tons; lr.pieces += b.pieces;
+    if(b.date < lr.start) lr.start = new Date(b.date);
+    if(b.date > lr.end) lr.end = new Date(b.date);
+
+    // sub-rolling = contiguous time block within this campaign.
+    // A new sub-rolling opens whenever we see this campaign right after a different campaign.
+    if(lastKey !== key){
+      c.subRollings.push({ start:new Date(b.date), end:new Date(b.date), bundles:1, tons:b.tons, pieces:b.pieces });
+      lastKey = key;
+    } else {
+      const sr = c.subRollings[c.subRollings.length-1];
+      sr.end = new Date(b.date);
+      sr.bundles++; sr.tons += b.tons; sr.pieces += b.pieces;
     }
   }
-  if(cur) finalize(cur);
+  const out = [];
+  for(const c of map.values()){
+    c.heats = c._heats.size; delete c._heats;
+    c.crews = Array.from(c._crews).filter(Boolean).join(','); delete c._crews;
+    c.lengthBreakdown = Array.from(c._lenMap.values()).sort((a,b)=>b.tons-a.tons);
+    c.lengthCount = c.lengthBreakdown.length;
+    delete c._lenMap;
+    c.subRollings.forEach(s => { s.hours = (s.end - s.start)/3600000; });
+    c.hours = c.subRollings.reduce((a,s)=>a+s.hours, 0);     // active rolling hours
+    c.spanHours = (c.end - c.start)/3600000;                  // calendar span
+    c.subCount = c.subRollings.length;
+    out.push(c);
+  }
+  // Sort newest-end first by default
+  out.sort((a,b) => b.end - a.end);
   return out;
 }
 
@@ -1177,7 +1218,10 @@ function renderMillRuns(){
   document.getElementById('runsContent').style.display = empty ? 'none' : 'block';
   if(empty) return;
 
-  // Apply gantt window filter (for Gantt chart only — table shows the same window)
+  // Color map for Gantt: distinct color per Product ID, ordered by total tons.
+  const pidColors = buildProductIdColors(rolls);
+
+  // Window filter: campaigns whose end date falls within the chosen lookback window.
   const wnd = STATE.filters.ganttWindow || '30';
   const minSpan = Number(STATE.filters.ganttMin || 0);
   const maxEnd = Math.max(...rolls.map(r=>r.end.getTime()));
@@ -1195,21 +1239,22 @@ function renderMillRuns(){
   const m1 = visible.filter(r=>r.mill==='1');
   const m2 = visible.filter(r=>r.mill==='2');
   const tonsPerHr = totalHours ? totalTons/totalHours : 0;
+  const totalSubs = visible.reduce((a,r)=>a+r.subCount,0);
   const dates = visible.map(r=>r.start.getTime()).concat(visible.map(r=>r.end.getTime()));
   const minD = dates.length?new Date(Math.min(...dates)):null;
   const maxD = dates.length?new Date(Math.max(...dates)):null;
   document.getElementById('runsKpis').innerHTML = `
-    <div class="kpi green"><h3>Rollings</h3><div class="val">${fmt0(visible.length)}</div><div class="sub">Mill 1: ${fmt0(m1.length)} · Mill 2: ${fmt0(m2.length)}</div></div>
+    <div class="kpi green"><h3>Campaigns</h3><div class="val">${fmt0(visible.length)}</div><div class="sub">Mill 1: ${fmt0(m1.length)} · Mill 2: ${fmt0(m2.length)}</div></div>
     <div class="kpi green"><h3>Total Tons</h3><div class="val">${fmt0(totalTons)}<small>tons</small></div><div class="sub">Mill 1: ${fmt0(m1.reduce((a,r)=>a+r.tons,0))} · Mill 2: ${fmt0(m2.reduce((a,r)=>a+r.tons,0))}</div></div>
-    <div class="kpi green"><h3>Rolling Hours</h3><div class="val">${fmt0(totalHours)}<small>hrs</small></div><div class="sub">span first start → last end</div></div>
+    <div class="kpi green"><h3>Active Rolling Hrs</h3><div class="val">${fmt0(totalHours)}<small>hrs</small></div><div class="sub">${fmt0(totalSubs)} contiguous runs across ${fmt0(visible.length)} campaigns</div></div>
     <div class="kpi blue"><h3>Tons / Hour</h3><div class="val">${fmt1(tonsPerHr)}</div><div class="sub">overall throughput</div></div>
     <div class="kpi green"><h3>Date Range</h3><div class="val" style="font-size:18px">${minD?dstr(minD):'—'}</div><div class="sub">→ ${maxD?dstr(maxD):'—'}</div></div>
   `;
 
-  document.getElementById('ganttRange').textContent = visible.length ? `${dstr(minD)} → ${dstr(maxD)} · ${fmt0(visible.length)} rollings` : '';
-  document.getElementById('ganttSummary').innerHTML = `<b>${fmt0(visible.length)}</b> rollings · <b>${fmt0(totalTons)}</b> tons · <b>${fmt0(totalHours)}</b> hrs`;
+  document.getElementById('ganttRange').textContent = visible.length ? `${dstr(minD)} → ${dstr(maxD)} · ${fmt0(visible.length)} campaigns / ${fmt0(totalSubs)} runs` : '';
+  document.getElementById('ganttSummary').innerHTML = `<b>${fmt0(visible.length)}</b> campaigns · <b>${fmt0(totalSubs)}</b> runs · <b>${fmt0(totalTons)}</b> tons · <b>${fmt0(totalHours)}</b> hrs`;
 
-  renderGantt(visible, minD, maxD);
+  renderGantt(visible, minD, maxD, pidColors);
 
   // Rolling summary table — apply optional click-filter from Gantt
   let tableRows = visible;
@@ -1219,10 +1264,10 @@ function renderMillRuns(){
   if(STATE.filters.rollingMillFilter){
     tableRows = tableRows.filter(r => r.mill === STATE.filters.rollingMillFilter);
   }
-  // Sort by start desc
-  tableRows = tableRows.slice().sort((a,b) => b.start - a.start);
+  // Sort by tons desc so the biggest campaigns surface first (after end-date sort tie-break)
+  tableRows = tableRows.slice().sort((a,b) => b.tons - a.tons);
   const flt = STATE.filters.rollingKeyFilter
-    ? `<button class="chip active">Filtered to selected rolling — click bar again to clear</button>`
+    ? `<button class="chip active">Filtered to selected campaign — click bar again to clear</button>`
     : '';
   document.getElementById('rollingFilter').innerHTML = flt;
 
@@ -1232,7 +1277,8 @@ function renderMillRuns(){
       <th style="width:28px"></th>
       <th>Mill</th><th>Product ID</th><th>Grade</th><th>Disp.</th>
       <th>Lengths</th>
-      <th>Start</th><th>End</th><th class="num">Span (hrs)</th>
+      <th>First Run</th><th>Last Run</th>
+      <th class="num">Hours</th><th class="num">Runs</th>
       <th class="num">Bundles</th><th class="num">Tons</th><th class="num">Heats</th><th>Crew(s)</th>
     </tr></thead>
     <tbody>${showSlice.map((r,i)=>{
@@ -1241,18 +1287,20 @@ function renderMillRuns(){
         (r.lengthCount === 1
           ? mmToFtIn(dom.length)
           : `${mmToFtIn(dom.length)} <span style="color:var(--gray-500)">+ ${r.lengthCount-1} more</span>`);
-      const expandable = (r.lengthBreakdown||[]).length > 0;
+      const expandable = (r.lengthBreakdown||[]).length > 0 || (r.subRollings||[]).length > 0;
+      const colorChip = pidColors[r.productId] || '#7f8c8d';
       return `
       <tr class="r-row" data-i="${i}">
         <td>${expandable?`<button class="exp-btn" data-i="${i}" aria-label="Expand">▶</button>`:''}</td>
         <td>Mill ${r.mill}</td>
-        <td><span style="display:inline-block;width:8px;height:8px;background:${PRODUCT_COLORS[r.product]||'#7f8c8d'};border-radius:2px;margin-right:6px"></span>${esc(r.productId)}</td>
+        <td><span style="display:inline-block;width:10px;height:10px;background:${colorChip};border-radius:2px;margin-right:6px;border:1px solid rgba(0,0,0,.15)"></span>${esc(r.productId)}</td>
         <td>${esc(r.grade)}</td>
         <td>${esc(r.disposition)}</td>
         <td>${lenCell}</td>
         <td>${r.start.toISOString().slice(0,16).replace('T',' ')}</td>
         <td>${r.end.toISOString().slice(0,16).replace('T',' ')}</td>
         <td class="num">${fmt1(r.hours)}</td>
+        <td class="num">${fmt0(r.subCount)}</td>
         <td class="num">${fmt0(r.bundles)}</td>
         <td class="num">${fmt1(r.tons)}</td>
         <td class="num">${fmt0(r.heats)}</td>
@@ -1260,13 +1308,13 @@ function renderMillRuns(){
       </tr>
       <tr class="r-detail" data-i="${i}" style="display:none">
         <td></td>
-        <td colspan="12" style="background:var(--gray-50);padding:10px 14px">
-          <div style="font-size:11px;color:var(--gray-500);letter-spacing:1px;font-weight:700;text-transform:uppercase;margin-bottom:6px">Length Breakdown — ${fmt0(r.lengthCount)} length${r.lengthCount===1?'':'s'} ran in this rolling</div>
+        <td colspan="13" style="background:var(--gray-50);padding:10px 14px">
+          <div style="font-size:11px;color:var(--gray-500);letter-spacing:1px;font-weight:700;text-transform:uppercase;margin-bottom:6px">Length Breakdown — ${fmt0(r.lengthCount)} length${r.lengthCount===1?'':'s'} run in this campaign</div>
           <table class="length-detail" style="background:#fff">
             <thead><tr>
               <th>Length</th><th class="num">mm</th>
-              <th class="num">Bundles</th><th class="num">Pieces</th><th class="num">Tons</th><th class="num">% of rolling</th>
-              <th>From</th><th>To</th>
+              <th class="num">Bundles</th><th class="num">Pieces</th><th class="num">Tons</th><th class="num">% of campaign</th>
+              <th>First</th><th>Last</th>
             </tr></thead>
             <tbody>${(r.lengthBreakdown||[]).map(l => `
               <tr>
@@ -1281,13 +1329,27 @@ function renderMillRuns(){
               </tr>`).join('')}
             </tbody>
           </table>
+          <div style="font-size:11px;color:var(--gray-500);letter-spacing:1px;font-weight:700;text-transform:uppercase;margin:14px 0 6px">Contiguous Runs — ${fmt0(r.subCount)} session${r.subCount===1?'':'s'} on the mill</div>
+          <table class="length-detail" style="background:#fff">
+            <thead><tr><th class="num">#</th><th>Start</th><th>End</th><th class="num">Hours</th><th class="num">Bundles</th><th class="num">Tons</th></tr></thead>
+            <tbody>${(r.subRollings||[]).map((s,si) => `
+              <tr>
+                <td class="num">${si+1}</td>
+                <td>${s.start.toISOString().slice(0,16).replace('T',' ')}</td>
+                <td>${s.end.toISOString().slice(0,16).replace('T',' ')}</td>
+                <td class="num">${fmt1(s.hours)}</td>
+                <td class="num">${fmt0(s.bundles)}</td>
+                <td class="num">${fmt1(s.tons)}</td>
+              </tr>`).join('')}
+            </tbody>
+          </table>
         </td>
       </tr>`;
     }).join('')}</tbody>
   `;
   if(tableRows.length > 500){
     document.getElementById('tblRollings').insertAdjacentHTML('beforeend',
-      `<tfoot><tr><td colspan="13" style="color:var(--gray-500);text-align:center;padding:10px">Showing first 500 of ${fmt0(tableRows.length)} rollings — narrow the window or click a Gantt bar to drill in.</td></tr></tfoot>`);
+      `<tfoot><tr><td colspan="14" style="color:var(--gray-500);text-align:center;padding:10px">Showing first 500 of ${fmt0(tableRows.length)} campaigns — narrow the window or click a Gantt bar to drill in.</td></tr></tfoot>`);
   }
   // Wire expand/collapse
   document.querySelectorAll('#tblRollings .exp-btn').forEach(btn => btn.addEventListener('click', e => {
@@ -1335,7 +1397,7 @@ function renderMillRuns(){
   });
 }
 
-function renderGantt(rollings, minD, maxD){
+function renderGantt(rollings, minD, maxD, pidColors){
   const wrap = document.getElementById('ganttWrap');
   const svg = document.getElementById('ganttSvg');
   const tip = document.getElementById('ganttTip');
@@ -1352,11 +1414,7 @@ function renderGantt(rollings, minD, maxD){
   const span = Math.max(1, maxD - minD);
   const xOf = d => PAD_L + ((d - minD) / span) * innerW;
   const laneY = m => PAD_T + lanes.indexOf(m) * LANE_H;
-  const tickFmt = (date) => {
-    const d = new Date(date);
-    return d.toISOString().slice(0,10);
-  };
-  // Build axis ticks (day or week granularity depending on span)
+  const tickFmt = (date) => new Date(date).toISOString().slice(0,10);
   const days = (maxD - minD) / 86400000;
   let stepDays = 1;
   if(days > 240) stepDays = 30;
@@ -1369,36 +1427,40 @@ function renderGantt(rollings, minD, maxD){
   }
 
   let html = '';
-  // Lane backgrounds + labels
   for(let i=0;i<lanes.length;i++){
     const m = lanes[i];
     html += `<rect class="${i%2===0?'lane':'lane-alt'}" x="${PAD_L}" y="${laneY(m)}" width="${innerW}" height="${LANE_H}" />`;
     html += `<text class="lane-label" x="${PAD_L-10}" y="${laneY(m)+LANE_H/2+5}" text-anchor="end">MILL ${m}</text>`;
   }
-  // Vertical grid + axis
   for(const t of ticks){
     const x = xOf(t);
     html += `<line class="axis-tick" x1="${x}" y1="${PAD_T}" x2="${x}" y2="${H-PAD_B}" />`;
     html += `<text class="axis-label" x="${x}" y="${H-PAD_B+14}" text-anchor="middle">${tickFmt(t)}</text>`;
   }
-  // Bars
+  // One bar per contiguous sub-rolling. Colors come from the product-ID
+  // palette so every run of "1REBAR 04-60" lands on the same color, regardless
+  // of how many times the campaign was interrupted.
   for(const r of rollings){
-    const x1 = xOf(r.start.getTime());
-    const x2 = Math.max(x1+1, xOf(r.end.getTime()));
-    const w = x2 - x1;
-    const y = laneY(r.mill) + 8;
-    const h = LANE_H - 16;
-    const fill = PRODUCT_COLORS[r.product] || '#7f8c8d';
+    const fill = (pidColors && pidColors[r.productId]) || PRODUCT_COLORS[r.product] || '#7f8c8d';
     const sel = STATE.filters.rollingKeyFilter === r.key ? ';stroke:#000;stroke-width:2' : '';
     const lenCount = r.lengthCount || (r.lengthBreakdown ? r.lengthBreakdown.length : 0);
     const dom = r.lengthBreakdown && r.lengthBreakdown[0];
     const lenLabel = !dom ? '—' : (lenCount===1 ? mmToFtIn(dom.length) : `${mmToFtIn(dom.length)} + ${lenCount-1} more`);
-    html += `<rect class="bar" x="${x1}" y="${y}" width="${w}" height="${h}" fill="${fill}" style="opacity:.85${sel}"
-              data-key="${esc(r.key)}" data-mill="${r.mill}"
-              data-pid="${esc(r.productId)}" data-grade="${esc(r.grade)}" data-len="${esc(lenLabel)}" data-disp="${esc(r.disposition)}"
-              data-start="${r.start.toISOString()}" data-end="${r.end.toISOString()}"
-              data-tons="${r.tons.toFixed(2)}" data-hours="${r.hours.toFixed(1)}" data-bundles="${r.bundles}" data-heats="${r.heats}"
-            />`;
+    const subs = (r.subRollings && r.subRollings.length) ? r.subRollings : [{start:r.start, end:r.end, hours:r.hours, bundles:r.bundles, tons:r.tons}];
+    for(const s of subs){
+      const x1 = xOf(s.start.getTime());
+      const x2 = Math.max(x1+1, xOf(s.end.getTime()));
+      const y = laneY(r.mill) + 8;
+      const h = LANE_H - 16;
+      html += `<rect class="bar" x="${x1}" y="${y}" width="${x2-x1}" height="${h}" fill="${fill}" style="opacity:.88${sel}"
+                data-key="${esc(r.key)}" data-mill="${r.mill}"
+                data-pid="${esc(r.productId)}" data-grade="${esc(r.grade)}" data-len="${esc(lenLabel)}" data-disp="${esc(r.disposition)}"
+                data-start="${s.start.toISOString()}" data-end="${s.end.toISOString()}"
+                data-tons="${s.tons.toFixed(2)}" data-hours="${s.hours.toFixed(1)}" data-bundles="${s.bundles}"
+                data-cs="${r.start.toISOString()}" data-ce="${r.end.toISOString()}"
+                data-ctons="${r.tons.toFixed(2)}" data-chours="${r.hours.toFixed(1)}" data-cbundles="${r.bundles}" data-csubs="${r.subCount}" data-cheats="${r.heats}"
+              />`;
+    }
   }
   svg.setAttribute('width', W);
   svg.setAttribute('height', H);
@@ -1410,9 +1472,13 @@ function renderGantt(rollings, minD, maxD){
     rect.addEventListener('mouseenter', e => {
       const d = e.target.dataset;
       tip.innerHTML = `<b>Mill ${d.mill} · ${esc(d.pid)}</b><br>
-        Grade: ${esc(d.grade)}<br>Lengths: ${esc(d.len)}<br>Disposition: ${esc(d.disp)}<br>
+        Grade: ${esc(d.grade)} · Disp: ${esc(d.disp)} · Lengths: ${esc(d.len)}<br>
+        <span style="color:#bdc3c7;font-size:11px">— THIS RUN —</span><br>
         ${d.start.slice(0,16).replace('T',' ')} → ${d.end.slice(0,16).replace('T',' ')}<br>
-        <b>${fmt1(Number(d.tons))} tons</b> · ${fmt1(Number(d.hours))} hrs · ${fmt0(Number(d.bundles))} bundles · ${fmt0(Number(d.heats))} heats`;
+        <b>${fmt1(Number(d.tons))} tons</b> · ${fmt1(Number(d.hours))} hrs · ${fmt0(Number(d.bundles))} bundles<br>
+        <span style="color:#bdc3c7;font-size:11px">— CAMPAIGN TOTAL —</span><br>
+        ${d.cs.slice(0,10)} → ${d.ce.slice(0,10)}<br>
+        <b>${fmt1(Number(d.ctons))} tons</b> across ${fmt0(Number(d.csubs))} runs · ${fmt1(Number(d.chours))} hrs · ${fmt0(Number(d.cbundles))} bundles · ${fmt0(Number(d.cheats))} heats`;
       tip.style.display = 'block';
     });
     rect.addEventListener('mousemove', e => {
@@ -1910,7 +1976,8 @@ document.getElementById('fileRestore').addEventListener('change', e => {
       ...r,
       start: r.start?new Date(r.start):null,
       end: r.end?new Date(r.end):null,
-      lengthBreakdown: (r.lengthBreakdown||[]).map(l => ({...l, start: l.start?new Date(l.start):null, end: l.end?new Date(l.end):null}))
+      lengthBreakdown: (r.lengthBreakdown||[]).map(l => ({...l, start: l.start?new Date(l.start):null, end: l.end?new Date(l.end):null})),
+      subRollings: (r.subRollings||[]).map(s => ({...s, start: s.start?new Date(s.start):null, end: s.end?new Date(s.end):null}))
     }));
       STATE.rollings = { '1': reviveRoll(s.rollings && s.rollings['1']), '2': reviveRoll(s.rollings && s.rollings['2']) };
       STATE.millBundles = { '1': [], '2': [] };
