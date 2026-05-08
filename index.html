@@ -456,7 +456,7 @@ const STATE = {
   // Mill bundle data lives in memory only (too big for localStorage); rollings persist.
   millBundles: { '1': [], '2': [] },
   rollings:    { '1': [], '2': [] },
-  filters: { product: 'ALL', bay: 'ALL', includeHold: true, shipRange: 'day', prodSub: 'runs', ganttMode: 'timeline', ganttWindow: '30', ganttMin: 0, calMill: null, rollingMillFilter: null, rollingKeyFilter: null, detailCat: 'ALL', detailPid: null, detailYear: 'ALL' },
+  filters: { product: 'ALL', bay: 'ALL', includeHold: true, shipRange: 'day', prodSub: 'runs', ganttMode: 'timeline', ganttWindow: '30', ganttMin: 0, calMill: null, rollingMillFilter: null, rollingKeyFilter: null, detailCat: 'ALL', detailPid: null, detailYear: 'ALL', detailType: 'ALL', detailGrade: 'ALL' },
   asOf: null
 };
 
@@ -620,6 +620,21 @@ function classifyProductId(pid){
   if(p.startsWith('CH') || p.startsWith('EA') || p.startsWith('UA') ||
      p.startsWith('FL') || p.startsWith('SQ')) return 'HR-MBQ';
   return 'OTHER';
+}
+/* Pull the type prefix (1FL, 1RD, 1EA, 1UA, 1CH, 1RES, 1BI, 1SQ — and the
+   "2"-leading variants) out of a Product ID string so we can group every
+   size under one type bucket in the Detail Report. Falls back to OTHER. */
+function extractProductType(pid){
+  if(!pid) return 'OTHER';
+  const m = String(pid).toUpperCase().match(/[12](FL|RD|RND|EA|UA|CH|RES|REBAR|BI|BILLET|SQ)/);
+  if(!m) return 'OTHER';
+  // Normalize a few synonyms so 1RND/1RD and 1RES/1REBAR collapse together.
+  const lead = m[0][0];
+  let suffix = m[1];
+  if(suffix === 'RND') suffix = 'RD';
+  if(suffix === 'REBAR') suffix = 'RES';
+  if(suffix === 'BILLET') suffix = 'BI';
+  return lead + suffix;
 }
 const PRODUCT_COLORS = { REBAR:'#006b3f', 'HR-MBQ':'#d68910', 'EB-SBQ':'#7d3c98', BILLETS:'#2874a6', OTHER:'#7f8c8d' };
 const PRODUCT_LABEL = { REBAR:'Rebar', 'HR-MBQ':'MBQ', 'EB-SBQ':'EB (SBQ)', BILLETS:'Billets', OTHER:'Other' };
@@ -1600,16 +1615,44 @@ function renderDetailReport(allRolls, pidColors){
   html += '</div>';
 
   // Filter to category (within the year scope)
-  const scope = (cat === 'ALL') ? yrScoped : (byCat[cat] || []);
+  const catScope = (cat === 'ALL') ? yrScoped : (byCat[cat] || []);
 
-  // Slicer row 2: product family chips (sorted by total tons within category)
+  // Slicer row 2: TYPE chips (1FL, 1RD, 1EA, ...) — every size in a type rolls
+  // up here so the user can grab "all 1FL" with one click and drill into
+  // individual sizes from the Product chips below.
+  const tSel = STATE.filters.detailType || 'ALL';
+  const byType = {};
+  for(const r of catScope){
+    const t = extractProductType(r.productId);
+    (byType[t] = byType[t] || []).push(r);
+  }
+  const typesSorted = Object.keys(byType).sort((a,b) =>
+    byType[b].reduce((x,r)=>x+r.tons,0) - byType[a].reduce((x,r)=>x+r.tons,0));
+  if(typesSorted.length){
+    html += '<div class="slicer-row"><span class="label">Type</span>';
+    const totT = catScope.reduce((a,r)=>a+r.tons,0);
+    html += `<button class="chip ${tSel==='ALL'?'active':''}" data-detail-type="ALL">All<span class="count">${typesSorted.length} types · ${fmt0(totT)}t</span></button>`;
+    for(const t of typesSorted){
+      const rolls = byType[t];
+      const tt = rolls.reduce((a,r)=>a+r.tons,0);
+      const sizes = new Set(rolls.map(r=>r.productId)).size;
+      html += `<button class="chip ${tSel===t?'active':''}" data-detail-type="${esc(t)}">${esc(t)}<span class="count">${sizes} sizes · ${fmt0(tt)}t</span></button>`;
+    }
+    html += '</div>';
+  }
+
+  // Apply the type filter — this drives the Product chip list below, so
+  // selecting "1FL" shows only the individual flat sizes.
+  const scope = (tSel === 'ALL') ? catScope : (byType[tSel] || []);
+
+  // Slicer row 3: product family chips (sorted by total tons within scope)
   const byPid = {};
   for(const r of scope){ (byPid[r.productId] = byPid[r.productId] || []).push(r); }
   const pidsSorted = Object.keys(byPid).sort((a,b) =>
     byPid[b].reduce((x,r)=>x+r.tons,0) - byPid[a].reduce((x,r)=>x+r.tons,0));
 
-  html += '<div class="slicer-row products"><span class="label">Product</span>';
-  html += `<button class="chip ${!pid?'active':''}" data-detail-pid="">All<span class="count">${pidsSorted.length} IDs</span></button>`;
+  html += '<div class="slicer-row products"><span class="label">Size</span>';
+  html += `<button class="chip ${!pid?'active':''}" data-detail-pid="">All<span class="count">${pidsSorted.length} sizes</span></button>`;
   for(const p of pidsSorted){
     const sess = byPid[p];
     const tons = sess.reduce((a,r)=>a+r.tons,0);
@@ -1652,13 +1695,36 @@ function renderDetailReport(allRolls, pidColors){
     }
     html += '</tbody></table>';
   } else {
-    // Sessions for one product family, with length drill-down
-    const sessions = (byPid[pid] || []).slice().sort((a,b) => b.start - a.start);
+    // Product is selected — group all of its sessions by GRADE first,
+    // then drill into a specific grade and (per session row) into length.
+    const allForPid = (byPid[pid] || []);
+    const gSel = STATE.filters.detailGrade || 'ALL';
+    const byGrade = {};
+    for(const r of allForPid){
+      const g = r.grade || '—';
+      (byGrade[g] = byGrade[g] || []).push(r);
+    }
+    const gradesSorted = Object.keys(byGrade).sort((a,b) =>
+      byGrade[b].reduce((x,r)=>x+r.tons,0) - byGrade[a].reduce((x,r)=>x+r.tons,0));
+    if(gradesSorted.length > 1 || gradesSorted[0] !== '—'){
+      html += '<div class="slicer-row"><span class="label">Grade</span>';
+      const totT = allForPid.reduce((a,r)=>a+r.tons,0);
+      html += `<button class="chip ${gSel==='ALL'?'active':''}" data-detail-grade="ALL">All<span class="count">${gradesSorted.length} grades · ${fmt0(totT)}t</span></button>`;
+      for(const g of gradesSorted){
+        const rolls = byGrade[g];
+        const tt = rolls.reduce((a,r)=>a+r.tons,0);
+        html += `<button class="chip ${gSel===g?'active':''}" data-detail-grade="${esc(g)}">${esc(g)}<span class="count">${rolls.length} · ${fmt0(tt)}t</span></button>`;
+      }
+      html += '</div>';
+    }
+    const sessions = ((gSel === 'ALL') ? allForPid : (byGrade[gSel] || []))
+      .slice().sort((a,b) => b.start - a.start);
     const tt = sessions.reduce((a,r)=>a+r.tons,0);
     const th = sessions.reduce((a,r)=>a+r.hours,0);
     const lset = new Set();
     for(const s of sessions){ for(const l of s.lengthBreakdown) lset.add(l.length); }
-    html += `<p class="detail-tip"><b>${esc(pid)}</b> — ${fmt0(sessions.length)} sessions · ${fmt0(tt)} tons · ${fmt0(th)} hours · ${lset.size} distinct lengths run. Click ▶ on any row to see lengths run during that session.</p>`;
+    const gradeLbl = gSel === 'ALL' ? `${gradesSorted.length} grade${gradesSorted.length===1?'':'s'}` : `grade <b>${esc(gSel)}</b>`;
+    html += `<p class="detail-tip"><b>${esc(pid)}</b> · ${gradeLbl} — ${fmt0(sessions.length)} sessions · ${fmt0(tt)} tons · ${fmt0(th)} hours · ${lset.size} distinct lengths run. Click ▶ on any row to see lengths run during that session.</p>`;
     html += `<table class="detail-tbl">
       <thead><tr>
         <th style="width:28px"></th><th>Mill</th><th>Grade</th><th>Disp.</th>
@@ -1691,8 +1757,16 @@ function renderDetailReport(allRolls, pidColors){
   }
 
   body.innerHTML = html;
-  // Stash sessions on the body so the lazy-expand handler can grab the right one
-  body._sessions = (pid ? (byPid[pid]||[]).slice().sort((a,b) => b.start - a.start) : null);
+  // Stash sessions on the body so the lazy-expand handler can grab the right
+  // one — apply the same grade filter that the rendered table used.
+  if(pid){
+    const _all = byPid[pid] || [];
+    const _gSel = STATE.filters.detailGrade || 'ALL';
+    const _filtered = (_gSel === 'ALL') ? _all : _all.filter(r => (r.grade||'—') === _gSel);
+    body._sessions = _filtered.slice().sort((a,b) => b.start - a.start);
+  } else {
+    body._sessions = null;
+  }
 
   // Header summary (right side of card)
   document.getElementById('detailSummary').innerHTML =
@@ -1700,24 +1774,41 @@ function renderDetailReport(allRolls, pidColors){
     cat === 'ALL' ? `<b>${pidsSorted.length}</b> product IDs in scope` :
     `${PRODUCT_LABEL[cat]||cat}: <b>${pidsSorted.length}</b> product IDs`;
 
-  // Wire chip clicks
+  // Wire chip clicks. Each level resets every level below it so the user
+  // never lands in an inconsistent filter state.
   body.querySelectorAll('.chip[data-detail-yr]').forEach(c => c.addEventListener('click', () => {
     STATE.filters.detailYear = c.dataset.detailYr;
     STATE.filters.detailCat = 'ALL';
+    STATE.filters.detailType = 'ALL';
     STATE.filters.detailPid = null;
+    STATE.filters.detailGrade = 'ALL';
     saveState(); renderDetailReport(allRolls, pidColors);
   }));
   body.querySelectorAll('.chip[data-detail-cat]').forEach(c => c.addEventListener('click', () => {
     STATE.filters.detailCat = c.dataset.detailCat;
-    STATE.filters.detailPid = null; // reset product when category changes
+    STATE.filters.detailType = 'ALL';
+    STATE.filters.detailPid = null;
+    STATE.filters.detailGrade = 'ALL';
+    saveState(); renderDetailReport(allRolls, pidColors);
+  }));
+  body.querySelectorAll('.chip[data-detail-type]').forEach(c => c.addEventListener('click', () => {
+    STATE.filters.detailType = c.dataset.detailType;
+    STATE.filters.detailPid = null;
+    STATE.filters.detailGrade = 'ALL';
     saveState(); renderDetailReport(allRolls, pidColors);
   }));
   body.querySelectorAll('.chip[data-detail-pid]').forEach(c => c.addEventListener('click', () => {
     STATE.filters.detailPid = c.dataset.detailPid || null;
+    STATE.filters.detailGrade = 'ALL';
+    saveState(); renderDetailReport(allRolls, pidColors);
+  }));
+  body.querySelectorAll('.chip[data-detail-grade]').forEach(c => c.addEventListener('click', () => {
+    STATE.filters.detailGrade = c.dataset.detailGrade;
     saveState(); renderDetailReport(allRolls, pidColors);
   }));
   body.querySelectorAll('tr.fam-row').forEach(row => row.addEventListener('click', () => {
     STATE.filters.detailPid = row.dataset.detailPid;
+    STATE.filters.detailGrade = 'ALL';
     saveState(); renderDetailReport(allRolls, pidColors);
   }));
   // Lazy-render the per-session length breakdown only when the user expands
