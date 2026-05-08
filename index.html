@@ -286,7 +286,10 @@
         <div class="head">Rolling Schedule — Gantt by Mill<span class="right" id="ganttRange"></span></div>
         <div class="body">
           <div class="gantt-controls">
-            <span class="label">Window:</span>
+            <span class="label">View:</span>
+            <button class="chip active" data-gmode="timeline">Timeline</button>
+            <button class="chip" data-gmode="calendar">Calendar</button>
+            <span class="label" style="margin-left:14px">Window:</span>
             <button class="chip" data-gw="7">Last 7d</button>
             <button class="chip active" data-gw="30">Last 30d</button>
             <button class="chip" data-gw="90">Last 90d</button>
@@ -408,7 +411,7 @@ const STATE = {
   // Mill bundle data lives in memory only (too big for localStorage); rollings persist.
   millBundles: { '1': [], '2': [] },
   rollings:    { '1': [], '2': [] },
-  filters: { product: 'ALL', bay: 'ALL', includeHold: true, shipRange: 'day', prodSub: 'runs', ganttWindow: '30', ganttMin: 0, rollingMillFilter: null, rollingKeyFilter: null },
+  filters: { product: 'ALL', bay: 'ALL', includeHold: true, shipRange: 'day', prodSub: 'runs', ganttMode: 'timeline', ganttWindow: '30', ganttMin: 0, rollingMillFilter: null, rollingKeyFilter: null },
   asOf: null
 };
 
@@ -464,6 +467,63 @@ function mmToFtIn(mm){
   const ft = Math.floor(totalIn/12);
   const inches = totalIn - ft*12;
   return ft+"' "+inches+'"';
+}
+
+/* Nucor fiscal calendar — FY2026 W1 starts Sunday Jan 4 2026 (per the
+   uploaded calendar JPG and the NSTX file: W16 begins 4/19/2026).
+   Week is Sunday → Saturday. */
+const FY26_W1 = new Date(2026, 0, 4);
+const FY25_WEEKS = 52;
+const FY26_WEEKS = 52;
+function fiscalWeek(date){
+  if(!(date instanceof Date)) date = new Date(date);
+  const d = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+  const sun = new Date(d.getTime() - d.getDay()*86400000);
+  const diff = Math.round((sun - FY26_W1) / 86400000);
+  let wk = Math.floor(diff/7) + 1;
+  let year = 2026;
+  if(wk < 1){ year = 2025; wk = FY25_WEEKS + wk; if(wk < 1) wk = 1; }
+  else if(wk > FY26_WEEKS){ year = 2027; wk = wk - FY26_WEEKS; }
+  const end = new Date(sun.getTime() + 7*86400000 - 1);
+  return { wk, year, start: sun, end };
+}
+function fiscalWeekKey(date){
+  const fw = fiscalWeek(date);
+  return 'FY'+fw.year+'-W'+String(fw.wk).padStart(2,'0');
+}
+function fiscalWeekLabel(fw){
+  const monthShort = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  const s = fw.start, e = fw.end;
+  const sm = monthShort[s.getMonth()];
+  const em = monthShort[e.getMonth()];
+  if(sm === em) return `W${String(fw.wk).padStart(2,'0')} · ${sm} ${s.getDate()}–${e.getDate()}`;
+  return `W${String(fw.wk).padStart(2,'0')} · ${sm} ${s.getDate()}–${em} ${e.getDate()}`;
+}
+
+/* Slice a sub-rolling so that no segment crosses a fiscal-week boundary.
+   Tons are split proportionally to time. */
+function splitSubAtWeekBoundaries(sub){
+  const out = [];
+  let cursor = new Date(sub.start);
+  const totalMs = Math.max(1, sub.end - sub.start);
+  while(cursor < sub.end){
+    const fw = fiscalWeek(cursor);
+    const weekEndMs = fw.end.getTime();
+    const segEndMs = Math.min(weekEndMs, sub.end.getTime());
+    const segMs = segEndMs - cursor.getTime();
+    const ratio = segMs / totalMs;
+    out.push({
+      weekKey: 'FY'+fw.year+'-W'+String(fw.wk).padStart(2,'0'),
+      week: fw,
+      start: new Date(cursor),
+      end: new Date(segEndMs),
+      tons: (sub.tons||0) * ratio,
+      bundles: Math.round((sub.bundles||0) * ratio),
+      hours: segMs / 3600000
+    });
+    cursor = new Date(segEndMs + 1);
+  }
+  return out;
 }
 
 function classifyProduct(text){
@@ -1254,7 +1314,12 @@ function renderMillRuns(){
   document.getElementById('ganttRange').textContent = visible.length ? `${dstr(minD)} → ${dstr(maxD)} · ${fmt0(visible.length)} campaigns / ${fmt0(totalSubs)} runs` : '';
   document.getElementById('ganttSummary').innerHTML = `<b>${fmt0(visible.length)}</b> campaigns · <b>${fmt0(totalSubs)}</b> runs · <b>${fmt0(totalTons)}</b> tons · <b>${fmt0(totalHours)}</b> hrs`;
 
-  renderGantt(visible, minD, maxD, pidColors);
+  const mode = STATE.filters.ganttMode || 'timeline';
+  if(mode === 'calendar'){
+    renderGanttCalendar(visible, pidColors);
+  } else {
+    renderGantt(visible, minD, maxD, pidColors);
+  }
 
   // Rolling summary table — apply optional click-filter from Gantt
   let tableRows = visible;
@@ -1479,6 +1544,161 @@ function renderGantt(rollings, minD, maxD, pidColors){
         <span style="color:#bdc3c7;font-size:11px">— CAMPAIGN TOTAL —</span><br>
         ${d.cs.slice(0,10)} → ${d.ce.slice(0,10)}<br>
         <b>${fmt1(Number(d.ctons))} tons</b> across ${fmt0(Number(d.csubs))} runs · ${fmt1(Number(d.chours))} hrs · ${fmt0(Number(d.cbundles))} bundles · ${fmt0(Number(d.cheats))} heats`;
+      tip.style.display = 'block';
+    });
+    rect.addEventListener('mousemove', e => {
+      const r = wrap.getBoundingClientRect();
+      tip.style.left = (e.clientX - r.left + 12) + 'px';
+      tip.style.top = (e.clientY - r.top + 12) + 'px';
+    });
+    rect.addEventListener('mouseleave', () => { tip.style.display='none'; });
+    rect.addEventListener('click', () => {
+      const k = rect.dataset.key;
+      STATE.filters.rollingKeyFilter = STATE.filters.rollingKeyFilter === k ? null : k;
+      renderMillRuns();
+    });
+  });
+}
+
+/* Calendar mode: each row = one fiscal week × mill, x axis = 7 days
+   (Sun→Sat). Bars are sub-rollings (split at week boundaries) colored by
+   Product ID, so the user can scan the year week-by-week and see which
+   products were rolled. */
+function renderGanttCalendar(rollings, pidColors){
+  const wrap = document.getElementById('ganttWrap');
+  const svg = document.getElementById('ganttSvg');
+  const tip = document.getElementById('ganttTip');
+  if(!rollings.length){ svg.innerHTML=''; svg.setAttribute('width','100%'); svg.setAttribute('height','60'); return; }
+
+  // 1. Group sub-rollings by (mill, fiscal week)
+  const rowMap = new Map();
+  for(const r of rollings){
+    const subs = (r.subRollings && r.subRollings.length) ? r.subRollings : [{start:r.start,end:r.end,tons:r.tons,bundles:r.bundles,hours:r.hours}];
+    for(const s of subs){
+      for(const seg of splitSubAtWeekBoundaries(s)){
+        const key = r.mill + '|' + seg.weekKey;
+        if(!rowMap.has(key)){
+          rowMap.set(key, { mill: r.mill, weekKey: seg.weekKey, week: seg.week, runs: [] });
+        }
+        rowMap.get(key).runs.push({
+          start: seg.start, end: seg.end,
+          tons: seg.tons, hours: seg.hours, bundles: seg.bundles,
+          campaignKey: r.key, productId: r.productId, product: r.product,
+          grade: r.grade, disposition: r.disposition,
+          campaignTons: r.tons, campaignHours: r.hours, campaignBundles: r.bundles, campaignSubs: r.subCount, campaignHeats: r.heats,
+          lengthCount: r.lengthCount,
+          domLen: r.lengthBreakdown && r.lengthBreakdown[0] ? r.lengthBreakdown[0].length : null
+        });
+      }
+    }
+  }
+
+  // 2. Ensure all weeks between min and max are present (so empty weeks still render)
+  const allWeekStarts = Array.from(rowMap.values()).map(r => r.week.start.getTime());
+  const minWk = Math.min(...allWeekStarts);
+  const maxWk = Math.max(...allWeekStarts);
+  const fillKeys = new Set();
+  for(let t = minWk; t <= maxWk; t += 7*86400000){
+    const fw = fiscalWeek(new Date(t));
+    fillKeys.add('FY'+fw.year+'-W'+String(fw.wk).padStart(2,'0'));
+  }
+  const millsWithData = Array.from(new Set(Array.from(rowMap.values()).map(r => r.mill))).sort();
+  for(const wkKey of fillKeys){
+    for(const m of millsWithData){
+      const k = m + '|' + wkKey;
+      if(!rowMap.has(k)){
+        // derive week from first row with same key
+        let fw = null;
+        for(const v of rowMap.values()){ if(v.weekKey === wkKey){ fw = v.week; break; } }
+        if(!fw){
+          // compute from key (rare)
+          const wkNum = Number(wkKey.slice(-2));
+          const yr = Number(wkKey.slice(2,6));
+          const ms = FY26_W1.getTime() + (yr-2026)*52*7*86400000 + (wkNum-1)*7*86400000;
+          const start = new Date(ms);
+          fw = { wk: wkNum, year: yr, start, end: new Date(start.getTime()+7*86400000-1) };
+        }
+        rowMap.set(k, { mill: m, weekKey: wkKey, week: fw, runs: [] });
+      }
+    }
+  }
+
+  // 3. Sort rows
+  const rows = Array.from(rowMap.values()).sort((a,b) =>
+    a.week.start - b.week.start || a.mill.localeCompare(b.mill)
+  );
+
+  // 4. Layout
+  const W = Math.max(900, wrap.clientWidth - 24);
+  const PAD_L = 200, PAD_R = 16, PAD_T = 38, PAD_B = 12;
+  const ROW_H = 28;
+  const innerW = W - PAD_L - PAD_R;
+  const dayW = innerW / 7;
+  const H = PAD_T + rows.length * ROW_H + PAD_B;
+
+  let html = '';
+  // Day-of-week header
+  const dows = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+  for(let i=0;i<7;i++){
+    const x = PAD_L + i*dayW;
+    html += `<rect x="${x}" y="${PAD_T-26}" width="${dayW}" height="22" fill="${i%2===0?'#f0f3f1':'#e6ebe8'}" />`;
+    html += `<text class="axis-label" x="${x + dayW/2}" y="${PAD_T-10}" text-anchor="middle" style="font-size:11px;font-weight:700;fill:var(--gray-700)">${dows[i]}</text>`;
+  }
+
+  // Rows
+  for(let i=0;i<rows.length;i++){
+    const row = rows[i];
+    const y = PAD_T + i*ROW_H;
+    // Row background — alternate for readability; tint when fiscal month changes
+    const bg = (i%2===0) ? '#fcfdfc' : '#f4f6f5';
+    html += `<rect x="0" y="${y}" width="${W}" height="${ROW_H}" fill="${bg}" />`;
+    // Label area
+    const monthShort = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][row.week.start.getMonth()];
+    html += `<text x="10" y="${y+ROW_H/2+4}" style="font-size:12px;font-weight:700;fill:var(--gray-700)">W${String(row.week.wk).padStart(2,'0')}</text>`;
+    html += `<text x="44" y="${y+ROW_H/2+4}" style="font-size:11px;fill:var(--gray-500)">${monthShort} ${row.week.start.getDate()}–${row.week.end.getDate()}</text>`;
+    html += `<text x="142" y="${y+ROW_H/2+4}" style="font-size:11px;font-weight:700;fill:var(--green-d)">Mill ${row.mill}</text>`;
+    // Day grid lines
+    for(let dx=0;dx<=7;dx++){
+      html += `<line x1="${PAD_L+dx*dayW}" y1="${y}" x2="${PAD_L+dx*dayW}" y2="${y+ROW_H}" stroke="#e0e3e1" stroke-width="${dx===0||dx===7?1:0.5}" />`;
+    }
+    // Bars within the row
+    for(const run of row.runs){
+      // x position based on hours from week start
+      const wsMs = row.week.start.getTime();
+      const sFrac = Math.max(0, (run.start.getTime() - wsMs) / (7*86400000));
+      const eFrac = Math.min(1, (run.end.getTime() - wsMs) / (7*86400000));
+      const x1 = PAD_L + sFrac * innerW;
+      const x2 = Math.max(x1+1, PAD_L + eFrac * innerW);
+      const fill = (pidColors && pidColors[run.productId]) || PRODUCT_COLORS[run.product] || '#7f8c8d';
+      const sel = STATE.filters.rollingKeyFilter === run.campaignKey ? ';stroke:#000;stroke-width:1.5' : '';
+      const lenLabel = run.domLen ? (run.lengthCount===1 ? mmToFtIn(run.domLen) : mmToFtIn(run.domLen)+' + '+(run.lengthCount-1)+' more') : '—';
+      html += `<rect class="bar" x="${x1}" y="${y+4}" width="${x2-x1}" height="${ROW_H-8}" fill="${fill}" style="opacity:.92${sel}"
+        data-key="${esc(run.campaignKey)}" data-mill="${row.mill}"
+        data-pid="${esc(run.productId)}" data-grade="${esc(run.grade)}" data-len="${esc(lenLabel)}" data-disp="${esc(run.disposition)}"
+        data-start="${run.start.toISOString()}" data-end="${run.end.toISOString()}"
+        data-tons="${run.tons.toFixed(2)}" data-hours="${run.hours.toFixed(1)}" data-bundles="${run.bundles}"
+        data-cs="${run.start.toISOString()}" data-ce="${run.end.toISOString()}"
+        data-ctons="${(run.campaignTons||0).toFixed(2)}" data-chours="${(run.campaignHours||0).toFixed(1)}" data-cbundles="${run.campaignBundles||0}" data-csubs="${run.campaignSubs||0}" data-cheats="${run.campaignHeats||0}"
+        />`;
+    }
+  }
+
+  svg.setAttribute('width', W);
+  svg.setAttribute('height', H);
+  svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
+  svg.innerHTML = html;
+
+  // Tooltip + click — same shape as the timeline view
+  svg.querySelectorAll('rect.bar').forEach(rect => {
+    rect.addEventListener('mouseenter', e => {
+      const d = e.target.dataset;
+      tip.innerHTML = `<b>Mill ${d.mill} · ${esc(d.pid)}</b><br>
+        Grade: ${esc(d.grade)} · Disp: ${esc(d.disp)} · Lengths: ${esc(d.len)}<br>
+        <span style="color:#bdc3c7;font-size:11px">— THIS RUN —</span><br>
+        ${d.start.slice(0,16).replace('T',' ')} → ${d.end.slice(0,16).replace('T',' ')}<br>
+        <b>${fmt1(Number(d.tons))} tons</b> · ${fmt1(Number(d.hours))} hrs · ${fmt0(Number(d.bundles))} bundles<br>
+        <span style="color:#bdc3c7;font-size:11px">— CAMPAIGN TOTAL —</span><br>
+        <b>${fmt1(Number(d.ctons))} tons</b> across ${fmt0(Number(d.csubs))} runs · ${fmt1(Number(d.chours))} hrs · ${fmt0(Number(d.cbundles))} bundles`;
       tip.style.display = 'block';
     });
     rect.addEventListener('mousemove', e => {
@@ -1953,6 +2173,16 @@ document.querySelectorAll('.gantt-controls .chip[data-gw]').forEach(c => c.addEv
 document.querySelectorAll('.gantt-controls .chip[data-gmin]').forEach(c => c.addEventListener('click', () => {
   STATE.filters.ganttMin = Number(c.dataset.gmin);
   document.querySelectorAll('.gantt-controls .chip[data-gmin]').forEach(x => x.classList.toggle('active', x===c));
+  saveState(); renderMillRuns();
+}));
+document.querySelectorAll('.gantt-controls .chip[data-gmode]').forEach(c => c.addEventListener('click', () => {
+  STATE.filters.ganttMode = c.dataset.gmode;
+  document.querySelectorAll('.gantt-controls .chip[data-gmode]').forEach(x => x.classList.toggle('active', x===c));
+  // Calendar mode reads better at All-time; bump window if user is on a tight one
+  if(c.dataset.gmode === 'calendar' && (STATE.filters.ganttWindow === '7' || STATE.filters.ganttWindow === '30')){
+    STATE.filters.ganttWindow = 'all';
+    document.querySelectorAll('.gantt-controls .chip[data-gw]').forEach(x => x.classList.toggle('active', x.dataset.gw === 'all'));
+  }
   saveState(); renderMillRuns();
 }));
 
