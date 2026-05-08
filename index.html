@@ -184,6 +184,21 @@
   .cal-cell .more{position:absolute;top:22px;right:4px;font-size:9px;color:#fff;font-weight:700;background:rgba(0,0,0,.32);padding:1px 5px;border-radius:8px;z-index:2}
   .cal-cell.has-data:hover{filter:brightness(1.06)}
   .cal-cell.selected{outline:2px solid #000;outline-offset:-2px;z-index:1}
+
+  /* Detail Report — slicers + drill-down */
+  .slicer-row{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-bottom:10px}
+  .slicer-row .label{color:var(--gray-500);font-size:11px;letter-spacing:1px;font-weight:700;text-transform:uppercase;margin-right:4px;min-width:64px}
+  .slicer-row .chip{position:relative;padding:5px 11px;font-size:12px;display:inline-flex;align-items:center;gap:6px}
+  .slicer-row .chip .count{font-size:10px;font-weight:500;color:var(--gray-500);background:var(--gray-100);padding:1px 5px;border-radius:8px}
+  .slicer-row .chip.active .count{color:#fff;background:rgba(255,255,255,.18)}
+  .slicer-row .chip .swatch{width:8px;height:8px;border-radius:2px;display:inline-block}
+  .slicer-row.products{padding:6px 0;border-top:1px dashed var(--gray-100);max-height:140px;overflow-y:auto}
+  .detail-tip{font-size:12px;color:var(--gray-500);margin:0 0 8px}
+  table.detail-tbl{width:100%;border-collapse:collapse;font-size:13px}
+  table.detail-tbl th{background:var(--gray-50);font-size:11px;letter-spacing:1px;color:var(--gray-500);font-weight:700;text-transform:uppercase;padding:8px 10px;text-align:left;border-bottom:1px solid var(--gray-100)}
+  table.detail-tbl td{padding:7px 10px;border-bottom:1px solid var(--gray-100)}
+  table.detail-tbl tr.fam-row{cursor:pointer}
+  table.detail-tbl tr.fam-row:hover{background:var(--green-l)}
 </style>
 </head>
 <body>
@@ -334,6 +349,11 @@
         <div class="head">Rolling Summary<span class="right" id="rollingFilter"></span></div>
         <div class="body" style="max-height:520px;overflow:auto"><table id="tblRollings"></table></div>
       </div>
+      <div class="card">
+        <div class="head">Detail Report — Drill into campaigns by product
+          <span class="right" id="detailSummary"></span></div>
+        <div class="body" id="detailReportBody"></div>
+      </div>
       <div class="split">
         <div class="card">
           <div class="head">Mill Output by Product (Tons)</div>
@@ -433,7 +453,7 @@ const STATE = {
   // Mill bundle data lives in memory only (too big for localStorage); rollings persist.
   millBundles: { '1': [], '2': [] },
   rollings:    { '1': [], '2': [] },
-  filters: { product: 'ALL', bay: 'ALL', includeHold: true, shipRange: 'day', prodSub: 'runs', ganttMode: 'timeline', ganttWindow: '30', ganttMin: 0, calMill: null, rollingMillFilter: null, rollingKeyFilter: null },
+  filters: { product: 'ALL', bay: 'ALL', includeHold: true, shipRange: 'day', prodSub: 'runs', ganttMode: 'timeline', ganttWindow: '30', ganttMin: 0, calMill: null, rollingMillFilter: null, rollingKeyFilter: null, detailCat: 'ALL', detailPid: null },
   asOf: null
 };
 
@@ -1514,6 +1534,188 @@ function renderMillRuns(){
     ]},
     options:{ responsive:true, maintainAspectRatio:false, plugins:{legend:{position:'bottom'}}, scales:{x:{stacked:true},y:{stacked:true,title:{display:true,text:'Tons'}}} }
   });
+
+  renderDetailReport(rolls, pidColors);
+}
+
+/* =====================================================================
+ * Detail Report — Category → Product Family → Sessions → Lengths
+ * ===================================================================*/
+function renderDetailReport(allRolls, pidColors){
+  const body = document.getElementById('detailReportBody');
+  if(!body) return;
+  if(!allRolls || !allRolls.length){
+    body.innerHTML = '<div class="empty" style="padding:30px">No mill production data loaded.</div>';
+    document.getElementById('detailSummary').textContent = '';
+    return;
+  }
+  const cat = STATE.filters.detailCat || 'ALL';
+  const pid = STATE.filters.detailPid;
+
+  // Group rollings by category
+  const byCat = {};
+  for(const r of allRolls){
+    const c = r.product || 'OTHER';
+    (byCat[c] = byCat[c] || []).push(r);
+  }
+  const catOrder = ['REBAR','HR-MBQ','EB-SBQ','BILLETS','OTHER'].filter(c => byCat[c]);
+
+  let html = '';
+
+  // Slicer row 1: category chips
+  html += '<div class="slicer-row"><span class="label">Category</span>';
+  const totalRolls = allRolls.length, totalTons = allRolls.reduce((a,r)=>a+r.tons,0);
+  html += `<button class="chip ${cat==='ALL'?'active':''}" data-detail-cat="ALL">All<span class="count">${fmt0(totalRolls)} sessions · ${fmt0(totalTons)}t</span></button>`;
+  for(const c of catOrder){
+    const rolls = byCat[c];
+    const pids = new Set(rolls.map(r=>r.productId)).size;
+    const tons = rolls.reduce((a,r)=>a+r.tons,0);
+    html += `<button class="chip ${cat===c?'active':''}" data-detail-cat="${c}"><span class="swatch" style="background:${PRODUCT_COLORS[c]}"></span>${PRODUCT_LABEL[c]||c}<span class="count">${pids} IDs · ${fmt0(tons)}t</span></button>`;
+  }
+  html += '</div>';
+
+  // Filter to category
+  const scope = (cat === 'ALL') ? allRolls : (byCat[cat] || []);
+
+  // Slicer row 2: product family chips (sorted by total tons within category)
+  const byPid = {};
+  for(const r of scope){ (byPid[r.productId] = byPid[r.productId] || []).push(r); }
+  const pidsSorted = Object.keys(byPid).sort((a,b) =>
+    byPid[b].reduce((x,r)=>x+r.tons,0) - byPid[a].reduce((x,r)=>x+r.tons,0));
+
+  html += '<div class="slicer-row products"><span class="label">Product</span>';
+  html += `<button class="chip ${!pid?'active':''}" data-detail-pid="">All<span class="count">${pidsSorted.length} IDs</span></button>`;
+  for(const p of pidsSorted){
+    const sess = byPid[p];
+    const tons = sess.reduce((a,r)=>a+r.tons,0);
+    const color = (pidColors && pidColors[p]) || '#7f8c8d';
+    html += `<button class="chip ${pid===p?'active':''}" data-detail-pid="${esc(p)}"><span class="swatch" style="background:${color}"></span>${esc(p)}<span class="count">${sess.length} · ${fmt0(tons)}t</span></button>`;
+  }
+  html += '</div>';
+
+  // Body
+  if(!pid){
+    // Family summary table (one row per product ID)
+    html += `<p class="detail-tip">Click a product chip above (or a row below) to drill into every campaign session of that product.</p>`;
+    html += `<table class="detail-tbl">
+      <thead><tr>
+        <th>Product ID</th><th>Category</th>
+        <th class="num">Sessions</th><th class="num">Tons</th><th class="num">Hours</th>
+        <th class="num">Tons/Hr</th><th class="num">Distinct Lengths</th>
+        <th>First Run</th><th>Last Run</th>
+      </tr></thead><tbody>`;
+    for(const p of pidsSorted){
+      const sess = byPid[p];
+      const tt = sess.reduce((a,r)=>a+r.tons,0);
+      const th = sess.reduce((a,r)=>a+r.hours,0);
+      const lset = new Set();
+      for(const s of sess){ for(const l of s.lengthBreakdown) lset.add(l.length); }
+      const first = sess.reduce((a,r)=> r.start < a ? r.start : a, sess[0].start);
+      const last  = sess.reduce((a,r)=> r.end   > a ? r.end   : a, sess[0].end);
+      const color = (pidColors && pidColors[p]) || '#7f8c8d';
+      html += `<tr class="fam-row" data-detail-pid="${esc(p)}">
+        <td><span class="swatch" style="display:inline-block;width:10px;height:10px;background:${color};border-radius:2px;margin-right:6px;border:1px solid rgba(0,0,0,.15)"></span>${esc(p)}</td>
+        <td>${PRODUCT_LABEL[sess[0].product]||sess[0].product}</td>
+        <td class="num">${fmt0(sess.length)}</td>
+        <td class="num">${fmt0(tt)}</td>
+        <td class="num">${fmt0(th)}</td>
+        <td class="num">${th?fmt1(tt/th):'—'}</td>
+        <td class="num">${lset.size}</td>
+        <td>${dstr(first)}</td>
+        <td>${dstr(last)}</td>
+      </tr>`;
+    }
+    html += '</tbody></table>';
+  } else {
+    // Sessions for one product family, with length drill-down
+    const sessions = (byPid[pid] || []).slice().sort((a,b) => b.start - a.start);
+    const tt = sessions.reduce((a,r)=>a+r.tons,0);
+    const th = sessions.reduce((a,r)=>a+r.hours,0);
+    const lset = new Set();
+    for(const s of sessions){ for(const l of s.lengthBreakdown) lset.add(l.length); }
+    html += `<p class="detail-tip"><b>${esc(pid)}</b> — ${fmt0(sessions.length)} sessions · ${fmt0(tt)} tons · ${fmt0(th)} hours · ${lset.size} distinct lengths run. Click ▶ on any row to see lengths run during that session.</p>`;
+    html += `<table class="detail-tbl">
+      <thead><tr>
+        <th style="width:28px"></th><th>Mill</th><th>Grade</th><th>Disp.</th>
+        <th>Start</th><th>End</th>
+        <th class="num">Hours</th><th class="num">Days Since Last</th>
+        <th class="num">Bundles</th><th class="num">Tons</th>
+        <th class="num">Lengths</th><th class="num">Heats</th><th>Crew(s)</th>
+      </tr></thead><tbody>`;
+    sessions.forEach((r, i) => {
+      const expandable = (r.lengthBreakdown||[]).length > 0;
+      const gapStr = r.gapDays==null ? '<span style="color:var(--gray-500)">first run</span>' : fmtGapDays(r.gapDays);
+      html += `<tr class="d-row" data-i="${i}">
+        <td>${expandable?`<button class="exp-btn" data-detail-i="${i}" aria-label="Expand">▶</button>`:''}</td>
+        <td>Mill ${r.mill}</td>
+        <td>${esc(r.grade)}</td>
+        <td>${esc(r.disposition)}</td>
+        <td>${r.start.toISOString().slice(0,16).replace('T',' ')}</td>
+        <td>${r.end.toISOString().slice(0,16).replace('T',' ')}</td>
+        <td class="num">${fmt1(r.hours)}</td>
+        <td class="num">${gapStr}</td>
+        <td class="num">${fmt0(r.bundles)}</td>
+        <td class="num">${fmt1(r.tons)}</td>
+        <td class="num">${r.lengthCount}</td>
+        <td class="num">${fmt0(r.heats)}</td>
+        <td>${esc(r.crews)}</td>
+      </tr>
+      <tr class="d-detail" data-i="${i}" style="display:none">
+        <td></td>
+        <td colspan="12" style="background:var(--gray-50);padding:10px 14px">
+          <div style="font-size:11px;color:var(--gray-500);letter-spacing:1px;font-weight:700;text-transform:uppercase;margin-bottom:6px">Lengths run during this session — ${fmt0(r.lengthCount)} length${r.lengthCount===1?'':'s'}</div>
+          <table class="length-detail" style="background:#fff">
+            <thead><tr><th>Length</th><th class="num">mm</th><th class="num">Bundles</th><th class="num">Pieces</th><th class="num">Tons</th><th class="num">% of session</th><th>First</th><th>Last</th></tr></thead>
+            <tbody>${(r.lengthBreakdown||[]).map(l => `
+              <tr>
+                <td><b>${mmToFtIn(l.length)}</b></td>
+                <td class="num">${fmt0(l.length)}</td>
+                <td class="num">${fmt0(l.bundles)}</td>
+                <td class="num">${fmt0(l.pieces)}</td>
+                <td class="num">${fmt1(l.tons)}</td>
+                <td class="num">${r.tons?Math.round(l.tons/r.tons*100):0}%</td>
+                <td>${l.start ? l.start.toISOString().slice(0,16).replace('T',' ') : '—'}</td>
+                <td>${l.end ? l.end.toISOString().slice(0,16).replace('T',' ') : '—'}</td>
+              </tr>`).join('')}
+            </tbody>
+          </table>
+        </td>
+      </tr>`;
+    });
+    html += '</tbody></table>';
+  }
+
+  body.innerHTML = html;
+
+  // Header summary (right side of card)
+  document.getElementById('detailSummary').innerHTML =
+    pid ? `Product: <b>${esc(pid)}</b>` :
+    cat === 'ALL' ? `<b>${pidsSorted.length}</b> product IDs in scope` :
+    `${PRODUCT_LABEL[cat]||cat}: <b>${pidsSorted.length}</b> product IDs`;
+
+  // Wire chip clicks
+  body.querySelectorAll('.chip[data-detail-cat]').forEach(c => c.addEventListener('click', () => {
+    STATE.filters.detailCat = c.dataset.detailCat;
+    STATE.filters.detailPid = null; // reset product when category changes
+    saveState(); renderDetailReport(allRolls, pidColors);
+  }));
+  body.querySelectorAll('.chip[data-detail-pid]').forEach(c => c.addEventListener('click', () => {
+    STATE.filters.detailPid = c.dataset.detailPid || null;
+    saveState(); renderDetailReport(allRolls, pidColors);
+  }));
+  body.querySelectorAll('tr.fam-row').forEach(row => row.addEventListener('click', () => {
+    STATE.filters.detailPid = row.dataset.detailPid;
+    saveState(); renderDetailReport(allRolls, pidColors);
+  }));
+  body.querySelectorAll('.exp-btn[data-detail-i]').forEach(btn => btn.addEventListener('click', e => {
+    e.stopPropagation();
+    const i = btn.dataset.detailI;
+    const det = body.querySelector(`tr.d-detail[data-i="${i}"]`);
+    if(!det) return;
+    const open = det.style.display !== 'none';
+    det.style.display = open ? 'none' : 'table-row';
+    btn.textContent = open ? '▶' : '▼';
+  }));
 }
 
 function renderGantt(rollings, minD, maxD, pidColors){
