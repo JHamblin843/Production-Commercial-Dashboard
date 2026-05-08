@@ -156,6 +156,13 @@
   .gantt-controls{display:flex;gap:8px;align-items:center;margin-bottom:10px;flex-wrap:wrap;font-size:13px}
   .gantt-controls .label{color:var(--gray-500);font-size:11px;letter-spacing:1px;font-weight:700;text-transform:uppercase}
   .gantt-controls input[type=date]{font:inherit;padding:5px 8px;border:1px solid var(--gray-200);border-radius:6px}
+
+  /* Rolling table expand button + nested length-detail table */
+  .exp-btn{font:inherit;background:transparent;border:1px solid var(--gray-200);color:var(--gray-700);width:22px;height:22px;border-radius:4px;cursor:pointer;padding:0;font-size:11px;line-height:1}
+  .exp-btn:hover{border-color:var(--green);color:var(--green-d)}
+  table.length-detail{width:auto;min-width:600px;border:1px solid var(--gray-100);border-radius:4px}
+  table.length-detail th{background:#eef7f1;color:var(--green-d);font-size:10px;padding:6px 10px}
+  table.length-detail td{padding:5px 10px;font-size:12px}
 </style>
 </head>
 <body>
@@ -422,7 +429,12 @@ function loadState(){
     STATE.shipments = (s.shipments||[]).map(r => ({...r, date: r.date?new Date(r.date):null}));
     STATE.production = (s.production||[]).map(r => ({...r, date: r.date?new Date(r.date):null}));
     STATE.millBundles = { '1': [], '2': [] };
-    const reviveRoll = arr => (arr||[]).map(r => ({...r, start: r.start?new Date(r.start):null, end: r.end?new Date(r.end):null}));
+    const reviveRoll = arr => (arr||[]).map(r => ({
+      ...r,
+      start: r.start?new Date(r.start):null,
+      end: r.end?new Date(r.end):null,
+      lengthBreakdown: (r.lengthBreakdown||[]).map(l => ({...l, start: l.start?new Date(l.start):null, end: l.end?new Date(l.end):null}))
+    }));
     STATE.rollings = { '1': reviveRoll(s.rollings && s.rollings['1']), '2': reviveRoll(s.rollings && s.rollings['2']) };
     return true;
   }catch(e){ console.warn(e); return false; }
@@ -445,6 +457,16 @@ const fmt0 = n => (n==null||isNaN(n)) ? '—' : Math.round(n).toLocaleString();
 const dstr = d => d instanceof Date && !isNaN(d) ? d.toISOString().slice(0,10) : '';
 const today = () => { const t = new Date(); t.setHours(0,0,0,0); return t; };
 const daysBetween = (a,b) => Math.floor((a-b)/86400000);
+function mmToFtIn(mm){
+  if(mm==null || isNaN(mm) || mm===0) return '—';
+  const totalIn = mm/25.4;
+  const ft = Math.floor(totalIn/12);
+  const inches = totalIn - ft*12;
+  const inRound = Math.round(inches*10)/10;
+  if(inRound === 0) return ft+"' 0\"";
+  if(Math.abs(inRound - 12) < 0.05) return (ft+1)+"' 0\"";
+  return ft+"' "+(inRound % 1 === 0 ? inRound.toFixed(0) : inRound.toFixed(1))+'"';
+}
 
 function classifyProduct(text){
   if(!text) return 'OTHER';
@@ -811,15 +833,25 @@ function parseMillRuns(rows, mill){
 }
 
 /* Walk bundles in chronological order; a "rolling" is a contiguous block
-   sharing (productId, grade, length, disposition). The moment any of those
-   four changes, the current rolling closes and a new one opens. */
+   sharing (productId, grade, disposition). The moment any of those three
+   changes, the current rolling closes and a new one opens. Per-length
+   sub-aggregates ride along on each rolling for drill-down. */
 function computeRollings(bundles){
   if(!bundles || !bundles.length) return [];
   const sorted = [...bundles].sort((a,b) => a.date - b.date);
   const out = [];
   let cur = null;
+  const finalize = c => {
+    c.heats = c._heats.size; delete c._heats;
+    c.crews = Array.from(c._crews).filter(Boolean).join(','); delete c._crews;
+    c.hours = (c.end - c.start)/3600000;
+    c.lengthBreakdown = Array.from(c._lenMap.values()).sort((a,b)=>b.tons-a.tons);
+    c.lengthCount = c.lengthBreakdown.length;
+    delete c._lenMap;
+    out.push(c);
+  };
   for(const b of sorted){
-    const key = b.productId+'|'+b.grade+'|'+b.length+'|'+b.disposition;
+    const key = b.productId+'|'+b.grade+'|'+b.disposition;
     if(cur && cur.key === key){
       cur.bundles++;
       cur.tons += b.tons;
@@ -827,29 +859,28 @@ function computeRollings(bundles){
       if(b.date > cur.end) cur.end = b.date;
       cur._heats.add(b.heat);
       cur._crews.add(b.crew);
-    } else {
-      if(cur){
-        cur.heats = cur._heats.size; delete cur._heats;
-        cur.crews = Array.from(cur._crews).filter(Boolean).join(','); delete cur._crews;
-        cur.hours = (cur.end - cur.start)/3600000;
-        out.push(cur);
+      let lr = cur._lenMap.get(b.length);
+      if(!lr){
+        lr = { length:b.length, bundles:0, tons:0, pieces:0, start:new Date(b.date), end:new Date(b.date) };
+        cur._lenMap.set(b.length, lr);
       }
+      lr.bundles++; lr.tons += b.tons; lr.pieces += b.pieces;
+      if(b.date < lr.start) lr.start = new Date(b.date);
+      if(b.date > lr.end) lr.end = new Date(b.date);
+    } else {
+      if(cur) finalize(cur);
       cur = {
         mill: b.mill, key,
         productId: b.productId, product: b.product,
-        grade: b.grade, length: b.length, disposition: b.disposition,
+        grade: b.grade, disposition: b.disposition,
         start: new Date(b.date), end: new Date(b.date),
         bundles: 1, tons: b.tons, pieces: b.pieces,
-        _heats: new Set([b.heat]), _crews: new Set([b.crew])
+        _heats: new Set([b.heat]), _crews: new Set([b.crew]),
+        _lenMap: new Map([[b.length, { length:b.length, bundles:1, tons:b.tons, pieces:b.pieces, start:new Date(b.date), end:new Date(b.date) }]])
       };
     }
   }
-  if(cur){
-    cur.heats = cur._heats.size; delete cur._heats;
-    cur.crews = Array.from(cur._crews).filter(Boolean).join(','); delete cur._crews;
-    cur.hours = (cur.end - cur.start)/3600000;
-    out.push(cur);
-  }
+  if(cur) finalize(cur);
   return out;
 }
 
@@ -1198,31 +1229,78 @@ function renderMillRuns(){
     : '';
   document.getElementById('rollingFilter').innerHTML = flt;
 
+  const showSlice = tableRows.slice(0,500);
   document.getElementById('tblRollings').innerHTML = `
     <thead><tr>
-      <th>Mill</th><th>Product ID</th><th>Grade</th><th class="num">Length (mm)</th><th>Disp.</th>
+      <th style="width:28px"></th>
+      <th>Mill</th><th>Product ID</th><th>Grade</th><th>Disp.</th>
+      <th>Lengths</th>
       <th>Start</th><th>End</th><th class="num">Span (hrs)</th>
       <th class="num">Bundles</th><th class="num">Tons</th><th class="num">Heats</th><th>Crew(s)</th>
     </tr></thead>
-    <tbody>${tableRows.slice(0,500).map(r=>`<tr>
-      <td>Mill ${r.mill}</td>
-      <td><span style="display:inline-block;width:8px;height:8px;background:${PRODUCT_COLORS[r.product]||'#7f8c8d'};border-radius:2px;margin-right:6px"></span>${esc(r.productId)}</td>
-      <td>${esc(r.grade)}</td>
-      <td class="num">${fmt0(r.length)}</td>
-      <td>${esc(r.disposition)}</td>
-      <td>${r.start.toISOString().slice(0,16).replace('T',' ')}</td>
-      <td>${r.end.toISOString().slice(0,16).replace('T',' ')}</td>
-      <td class="num">${fmt1(r.hours)}</td>
-      <td class="num">${fmt0(r.bundles)}</td>
-      <td class="num">${fmt1(r.tons)}</td>
-      <td class="num">${fmt0(r.heats)}</td>
-      <td>${esc(r.crews)}</td>
-    </tr>`).join('')}</tbody>
+    <tbody>${showSlice.map((r,i)=>{
+      const dom = r.lengthBreakdown && r.lengthBreakdown[0];
+      const lenCell = !dom ? '—' :
+        (r.lengthCount === 1
+          ? mmToFtIn(dom.length)
+          : `${mmToFtIn(dom.length)} <span style="color:var(--gray-500)">+ ${r.lengthCount-1} more</span>`);
+      const expandable = (r.lengthBreakdown||[]).length > 0;
+      return `
+      <tr class="r-row" data-i="${i}">
+        <td>${expandable?`<button class="exp-btn" data-i="${i}" aria-label="Expand">▶</button>`:''}</td>
+        <td>Mill ${r.mill}</td>
+        <td><span style="display:inline-block;width:8px;height:8px;background:${PRODUCT_COLORS[r.product]||'#7f8c8d'};border-radius:2px;margin-right:6px"></span>${esc(r.productId)}</td>
+        <td>${esc(r.grade)}</td>
+        <td>${esc(r.disposition)}</td>
+        <td>${lenCell}</td>
+        <td>${r.start.toISOString().slice(0,16).replace('T',' ')}</td>
+        <td>${r.end.toISOString().slice(0,16).replace('T',' ')}</td>
+        <td class="num">${fmt1(r.hours)}</td>
+        <td class="num">${fmt0(r.bundles)}</td>
+        <td class="num">${fmt1(r.tons)}</td>
+        <td class="num">${fmt0(r.heats)}</td>
+        <td>${esc(r.crews)}</td>
+      </tr>
+      <tr class="r-detail" data-i="${i}" style="display:none">
+        <td></td>
+        <td colspan="12" style="background:var(--gray-50);padding:10px 14px">
+          <div style="font-size:11px;color:var(--gray-500);letter-spacing:1px;font-weight:700;text-transform:uppercase;margin-bottom:6px">Length Breakdown — ${fmt0(r.lengthCount)} length${r.lengthCount===1?'':'s'} ran in this rolling</div>
+          <table class="length-detail" style="background:#fff">
+            <thead><tr>
+              <th>Length</th><th class="num">mm</th>
+              <th class="num">Bundles</th><th class="num">Pieces</th><th class="num">Tons</th><th class="num">% of rolling</th>
+              <th>From</th><th>To</th>
+            </tr></thead>
+            <tbody>${(r.lengthBreakdown||[]).map(l => `
+              <tr>
+                <td><b>${mmToFtIn(l.length)}</b></td>
+                <td class="num">${fmt0(l.length)}</td>
+                <td class="num">${fmt0(l.bundles)}</td>
+                <td class="num">${fmt0(l.pieces)}</td>
+                <td class="num">${fmt1(l.tons)}</td>
+                <td class="num">${r.tons?Math.round(l.tons/r.tons*100):0}%</td>
+                <td>${l.start ? l.start.toISOString().slice(0,16).replace('T',' ') : '—'}</td>
+                <td>${l.end ? l.end.toISOString().slice(0,16).replace('T',' ') : '—'}</td>
+              </tr>`).join('')}
+            </tbody>
+          </table>
+        </td>
+      </tr>`;
+    }).join('')}</tbody>
   `;
   if(tableRows.length > 500){
     document.getElementById('tblRollings').insertAdjacentHTML('beforeend',
-      `<tfoot><tr><td colspan="12" style="color:var(--gray-500);text-align:center;padding:10px">Showing first 500 of ${fmt0(tableRows.length)} rollings — narrow the window or click a Gantt bar to drill in.</td></tr></tfoot>`);
+      `<tfoot><tr><td colspan="13" style="color:var(--gray-500);text-align:center;padding:10px">Showing first 500 of ${fmt0(tableRows.length)} rollings — narrow the window or click a Gantt bar to drill in.</td></tr></tfoot>`);
   }
+  // Wire expand/collapse
+  document.querySelectorAll('#tblRollings .exp-btn').forEach(btn => btn.addEventListener('click', e => {
+    e.stopPropagation();
+    const i = btn.dataset.i;
+    const det = document.querySelector(`#tblRollings .r-detail[data-i="${i}"]`);
+    const open = det.style.display !== 'none';
+    det.style.display = open ? 'none' : 'table-row';
+    btn.textContent = open ? '▶' : '▼';
+  }));
 
   // Mix donut: tons by product (visible window)
   const mix = {};
@@ -1315,9 +1393,12 @@ function renderGantt(rollings, minD, maxD){
     const h = LANE_H - 16;
     const fill = PRODUCT_COLORS[r.product] || '#7f8c8d';
     const sel = STATE.filters.rollingKeyFilter === r.key ? ';stroke:#000;stroke-width:2' : '';
+    const lenCount = r.lengthCount || (r.lengthBreakdown ? r.lengthBreakdown.length : 0);
+    const dom = r.lengthBreakdown && r.lengthBreakdown[0];
+    const lenLabel = !dom ? '—' : (lenCount===1 ? mmToFtIn(dom.length) : `${mmToFtIn(dom.length)} + ${lenCount-1} more`);
     html += `<rect class="bar" x="${x1}" y="${y}" width="${w}" height="${h}" fill="${fill}" style="opacity:.85${sel}"
               data-key="${esc(r.key)}" data-mill="${r.mill}"
-              data-pid="${esc(r.productId)}" data-grade="${esc(r.grade)}" data-len="${r.length}" data-disp="${esc(r.disposition)}"
+              data-pid="${esc(r.productId)}" data-grade="${esc(r.grade)}" data-len="${esc(lenLabel)}" data-disp="${esc(r.disposition)}"
               data-start="${r.start.toISOString()}" data-end="${r.end.toISOString()}"
               data-tons="${r.tons.toFixed(2)}" data-hours="${r.hours.toFixed(1)}" data-bundles="${r.bundles}" data-heats="${r.heats}"
             />`;
@@ -1332,7 +1413,7 @@ function renderGantt(rollings, minD, maxD){
     rect.addEventListener('mouseenter', e => {
       const d = e.target.dataset;
       tip.innerHTML = `<b>Mill ${d.mill} · ${esc(d.pid)}</b><br>
-        Grade: ${esc(d.grade)}<br>Length: ${fmt0(Number(d.len))} mm<br>Disposition: ${esc(d.disp)}<br>
+        Grade: ${esc(d.grade)}<br>Lengths: ${esc(d.len)}<br>Disposition: ${esc(d.disp)}<br>
         ${d.start.slice(0,16).replace('T',' ')} → ${d.end.slice(0,16).replace('T',' ')}<br>
         <b>${fmt1(Number(d.tons))} tons</b> · ${fmt1(Number(d.hours))} hrs · ${fmt0(Number(d.bundles))} bundles · ${fmt0(Number(d.heats))} heats`;
       tip.style.display = 'block';
@@ -1828,7 +1909,12 @@ document.getElementById('fileRestore').addEventListener('change', e => {
       STATE.inventory = (s.inventory||[]).map(r => ({...r, originDate: r.originDate?new Date(r.originDate):null}));
       STATE.shipments = (s.shipments||[]).map(r => ({...r, date: r.date?new Date(r.date):null}));
       STATE.production = (s.production||[]).map(r => ({...r, date: r.date?new Date(r.date):null}));
-      const reviveRoll = arr => (arr||[]).map(r => ({...r, start: r.start?new Date(r.start):null, end: r.end?new Date(r.end):null}));
+      const reviveRoll = arr => (arr||[]).map(r => ({
+      ...r,
+      start: r.start?new Date(r.start):null,
+      end: r.end?new Date(r.end):null,
+      lengthBreakdown: (r.lengthBreakdown||[]).map(l => ({...l, start: l.start?new Date(l.start):null, end: l.end?new Date(l.end):null}))
+    }));
       STATE.rollings = { '1': reviveRoll(s.rollings && s.rollings['1']), '2': reviveRoll(s.rollings && s.rollings['2']) };
       STATE.millBundles = { '1': [], '2': [] };
       saveState();
