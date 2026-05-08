@@ -1876,20 +1876,34 @@ function renderDetailReport(allRolls, pidColors){
     html += `<p class="detail-tip"><b>${esc(pid)}</b> · ${gradeLbl} — ${fmt0(sessions.length)} sessions · ${fmt0(tt)} tons · ${fmt0(th)} hours · ${lset.size} distinct lengths run. Click ▶ on any row to see lengths run during that session.</p>`;
     html += `<table class="detail-tbl">
       <thead><tr>
-        <th style="width:28px"></th><th>Mill</th><th>Grade</th><th>Disp.</th>
+        <th style="width:28px"></th><th>Mill</th><th>Grade</th><th class="num">Current Year Rolling #</th>
         <th>Start</th><th>End</th>
         <th class="num">Hours</th><th class="num">Days Since Last</th>
         <th class="num">Bundles</th><th class="num">Tons</th>
         <th class="num">Lengths</th><th class="num">Heats</th><th>Crew(s)</th>
       </tr></thead><tbody>`;
+    // Number each session by its chronological order within its fiscal
+    // year — earliest run in the year is #1 — so the table reads as a
+    // running count of how many times the product has rolled this FY.
+    const rollNo = new Map();
+    const byFY = {};
+    for(const s of sessions){
+      const fy = fiscalWeek(s.start).year;
+      (byFY[fy] = byFY[fy] || []).push(s);
+    }
+    for(const fy in byFY){
+      byFY[fy].slice().sort((a,b) => a.start - b.start)
+        .forEach((s, i) => rollNo.set(s, i + 1));
+    }
     sessions.forEach((r, i) => {
       const expandable = (r.lengthBreakdown||[]).length > 0;
       const gapStr = fmtGapCell(r);
+      const fy = fiscalWeek(r.start).year;
       html += `<tr class="d-row" data-i="${i}">
         <td>${expandable?`<button class="exp-btn" data-detail-i="${i}" aria-label="Expand">▶</button>`:''}</td>
         <td>Mill ${r.mill}</td>
         <td>${esc(r.grade)}</td>
-        <td>${esc(r.disposition)}</td>
+        <td class="num"><b>${rollNo.get(r)}</b><span style="color:var(--gray-500);font-weight:500;font-size:11px"> · FY${fy}</span></td>
         <td>${r.start.toISOString().slice(0,16).replace('T',' ')}</td>
         <td>${r.end.toISOString().slice(0,16).replace('T',' ')}</td>
         <td class="num">${fmt1(r.hours)}</td>
