@@ -461,10 +461,14 @@ const STATE = {
 };
 
 function saveState(){
-  // Don't persist raw bundles — they can be 100k+ rows (way over localStorage quota).
-  // Rollings (the compact summaries) do persist.
-  const toSave = { ...STATE, millBundles: { '1': [], '2': [] } };
-  try{ localStorage.setItem(LS_KEY, JSON.stringify(toSave)); }
+  // Persist bundles too so accumulated uploads survive a reload — but
+  // they can be huge (100k+ rows), so try with bundles first and fall
+  // back to dropping them if we hit the localStorage quota.
+  const withBundles = { ...STATE };
+  try{ localStorage.setItem(LS_KEY, JSON.stringify(withBundles)); return; }
+  catch(_){}
+  const slim = { ...STATE, millBundles: { '1': [], '2': [] } };
+  try{ localStorage.setItem(LS_KEY, JSON.stringify(slim)); }
   catch(e){ banner('Could not save to localStorage (data may be too large): '+e.message,'warn'); }
 }
 function loadState(){
@@ -476,7 +480,14 @@ function loadState(){
     STATE.inventory = (s.inventory||[]).map(r => ({...r, originDate: r.originDate?new Date(r.originDate):null}));
     STATE.shipments = (s.shipments||[]).map(r => ({...r, date: r.date?new Date(r.date):null}));
     STATE.production = (s.production||[]).map(r => ({...r, date: r.date?new Date(r.date):null}));
-    STATE.millBundles = { '1': [], '2': [] };
+    // Revive persisted bundles (Date objects need rebuilding). If the prior
+    // session couldn't fit them in localStorage these arrays will be empty
+    // — that's OK, the rollings beneath are still good for reading.
+    const reviveBundle = arr => (arr||[]).map(b => ({...b, date: b.date?new Date(b.date):null}));
+    STATE.millBundles = {
+      '1': reviveBundle(s.millBundles && s.millBundles['1']),
+      '2': reviveBundle(s.millBundles && s.millBundles['2'])
+    };
     const reviveRoll = arr => (arr||[]).map(r => ({
       ...r,
       start: r.start?new Date(r.start):null,
@@ -999,6 +1010,15 @@ function parseCsvText(text){
 }
 
 /* Bundle-level mill production parser. Each row in the CSV is one bundle. */
+/* Stable identity for a bundle so we can append uploads without
+   double-counting if the user re-uploads an overlapping CSV. tagNo is
+   unique within a mill when present; otherwise we hash the dimensions
+   that together describe a single bundle event. */
+function bundleDedupeKey(b){
+  if(b.tagNo) return b.mill + '|T|' + b.tagNo;
+  const dt = b.date instanceof Date ? b.date.toISOString() : String(b.date||'');
+  return [b.mill, b.heat, dt, b.productId, b.grade, b.length, b.tons, b.pieces].join('|');
+}
 function parseMillRuns(rows, mill){
   const out = [];
   for(const r of rows){
@@ -2614,14 +2634,27 @@ async function handleUpload(file, kind){
       banner('Parsing '+fmt0(text.length)+' chars from '+file.name+' …');
       const csvRows = parseCsvText(text);
       const mill = kind === 'mill1' ? '1' : '2';
-      const bundles = parseMillRuns(csvRows, mill);
-      if(!bundles.length){ banner('No bundles parsed from '+file.name+'. Check column headers.','warn'); return; }
-      STATE.millBundles[mill] = bundles;
-      const rolls = computeRollings(bundles);
+      const incoming = parseMillRuns(csvRows, mill);
+      if(!incoming.length){ banner('No bundles parsed from '+file.name+'. Check column headers.','warn'); return; }
+      // Append to whatever was already loaded for this mill, deduping by
+      // tag number when present (the natural unique key) and falling back
+      // to a composite of mill+heat+date+productId+grade+length+tons.
+      const existing = STATE.millBundles[mill] || [];
+      const seen = new Set(existing.map(bundleDedupeKey));
+      let added = 0, dupes = 0;
+      for(const b of incoming){
+        const k = bundleDedupeKey(b);
+        if(seen.has(k)){ dupes++; continue; }
+        seen.add(k);
+        existing.push(b);
+        added++;
+      }
+      STATE.millBundles[mill] = existing;
+      const rolls = computeRollings(existing);
       STATE.rollings[mill] = rolls;
       saveState();
-      banner(`Loaded ${fmt0(bundles.length)} bundles → ${fmt0(rolls.length)} rollings on Mill ${mill}.`);
-      setTimeout(clearBanner, 4000);
+      banner(`Mill ${mill}: +${fmt0(added)} new bundle${added===1?'':'s'} (${fmt0(dupes)} duplicate${dupes===1?'':'s'} skipped) — total ${fmt0(existing.length)} bundles → ${fmt0(rolls.length)} rollings.`);
+      setTimeout(clearBanner, 5000);
       STATE.filters.prodSub = 'runs';
       renderAll();
       return;
