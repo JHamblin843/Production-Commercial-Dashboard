@@ -98,6 +98,12 @@
   table th,table td{padding:8px 10px;text-align:left;border-bottom:1px solid var(--gray-100)}
   table th{background:var(--gray-50);font-size:11px;letter-spacing:1px;color:var(--gray-500);font-weight:700;text-transform:uppercase}
   table td.num,table th.num{text-align:right;font-variant-numeric:tabular-nums}
+  /* Days-since-last gap-health colors: rebar / FL REO / FL REM run on a
+     5-week cycle, everything else on a 10-week cycle. Thresholds drive
+     these classes — green = on-cadence, orange = slipping, red = late. */
+  .gap-good{color:#1b5e20;font-weight:700}
+  .gap-warn{color:#e65100;font-weight:700}
+  .gap-bad{color:#b71c1c;font-weight:700}
   table tbody tr:hover{background:var(--gray-50)}
 
   /* Two-col split */
@@ -1149,6 +1155,36 @@ function fmtGapDays(d){
   if(d < 10) return d.toFixed(1) + 'd';
   return Math.round(d) + 'd';
 }
+/* Rebar and 1FL REO/REM run on a ~5-week cycle (35 days). Everything
+   else is on a ~10-week cycle (70 days). The thresholds below decide
+   how the "Days Since Last" cell is colored. */
+function cycleDaysFor(r){
+  if(!r) return 70;
+  const pid = String(r.productId || '').toUpperCase();
+  if(/[12]\s*(REBAR|RES)\b/.test(pid)) return 35;
+  if(/[12]\s*FL\s*RE[OM]\b/.test(pid)) return 35;
+  return 70;
+}
+function gapHealthClass(r){
+  if(!r || r.gapDays == null) return '';
+  const d = r.gapDays;
+  if(cycleDaysFor(r) === 35){
+    if(d < 30) return '';
+    if(d <= 38) return 'gap-good';
+    if(d <= 42) return 'gap-warn';
+    return 'gap-bad';
+  }
+  if(d < 65) return '';
+  if(d <= 73) return 'gap-good';
+  if(d <= 77) return 'gap-warn';
+  return 'gap-bad';
+}
+function fmtGapCell(r){
+  if(!r || r.gapDays == null) return '<span style="color:var(--gray-500)">first run</span>';
+  const cls = gapHealthClass(r);
+  const txt = fmtGapDays(r.gapDays);
+  return cls ? `<span class="${cls}">${txt}</span>` : txt;
+}
 
 /* =====================================================================
  * Filtering
@@ -1517,7 +1553,7 @@ function renderMillRuns(){
           : `${mmToFtIn(dom.length)} <span style="color:var(--gray-500)">+ ${r.lengthCount-1} more</span>`);
       const expandable = (r.lengthBreakdown||[]).length > 0;
       const colorChip = pidColors[r.productId] || '#7f8c8d';
-      const gapStr = r.gapDays==null ? '<span style="color:var(--gray-500)">first run</span>' : fmtGapDays(r.gapDays);
+      const gapStr = fmtGapCell(r);
       return `
       <tr class="r-row" data-i="${i}">
         <td>${expandable?`<button class="exp-btn" data-i="${i}" aria-label="Expand">▶</button>`:''}</td>
@@ -1848,7 +1884,7 @@ function renderDetailReport(allRolls, pidColors){
       </tr></thead><tbody>`;
     sessions.forEach((r, i) => {
       const expandable = (r.lengthBreakdown||[]).length > 0;
-      const gapStr = r.gapDays==null ? '<span style="color:var(--gray-500)">first run</span>' : fmtGapDays(r.gapDays);
+      const gapStr = fmtGapCell(r);
       html += `<tr class="d-row" data-i="${i}">
         <td>${expandable?`<button class="exp-btn" data-detail-i="${i}" aria-label="Expand">▶</button>`:''}</td>
         <td>Mill ${r.mill}</td>
