@@ -164,7 +164,7 @@
   .cal-title .meta{font-size:12px;color:var(--gray-500);font-weight:500}
   .cal-grid{display:grid;grid-template-columns:repeat(7,1fr);border:1px solid var(--gray-200);border-radius:6px;overflow:hidden;background:#fff}
   .cal-head{background:var(--gray-50);padding:6px 0;text-align:center;font-size:11px;font-weight:700;color:var(--gray-500);letter-spacing:1.5px;border-bottom:1px solid var(--gray-200)}
-  .cal-cell{height:96px;border-right:1px solid var(--gray-100);border-bottom:1px solid var(--gray-100);position:relative;padding:0;font-size:11px;background:#fff;overflow:hidden}
+  .cal-cell{height:var(--cell-h, 96px);border-right:1px solid var(--gray-100);border-bottom:1px solid var(--gray-100);position:relative;padding:0;font-size:11px;background:#fff;overflow:hidden}
   .cal-cell.outside{background:#fafbfb;color:var(--gray-200)}
   .cal-cell.today{outline:2px solid var(--green);outline-offset:-2px;z-index:1}
   .cal-cell .date{position:absolute;top:3px;right:7px;font-weight:600;color:var(--gray-700);font-size:12px;z-index:2}
@@ -179,10 +179,10 @@
   .cal-stack::-webkit-scrollbar{width:6px}
   .cal-stack::-webkit-scrollbar-thumb{background:rgba(0,0,0,.28);border-radius:3px}
   .cal-stack::-webkit-scrollbar-track{background:transparent}
-  .cal-bar{color:#fff;font-weight:700;display:flex;flex-direction:column;justify-content:center;line-height:1.15;padding:2px 7px;overflow:hidden;cursor:pointer;border-bottom:1px solid rgba(255,255,255,.18);min-height:20px}
+  .cal-bar{color:#fff;font-weight:700;display:flex;flex-direction:column;justify-content:center;line-height:1.2;padding:3px 9px;overflow:hidden;cursor:pointer;border-bottom:1px solid rgba(255,255,255,.22);min-height:30px;text-shadow:0 1px 2px rgba(0,0,0,.18)}
   .cal-bar:last-child{border-bottom:none}
-  .cal-bar .pid{font-weight:800;font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;letter-spacing:.2px}
-  .cal-bar .meta{font-size:10.5px;font-weight:600;opacity:.95}
+  .cal-bar .pid{font-weight:800;font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;letter-spacing:.2px}
+  .cal-bar .meta{font-size:11px;font-weight:600;opacity:.95}
   .cal-bar:hover{filter:brightness(1.08)}
   .cal-bar.selected{outline:1.5px solid #000;outline-offset:-1.5px;z-index:2}
 
@@ -680,23 +680,31 @@ function extractDimensionGroup(pid){
 const PRODUCT_COLORS = { REBAR:'#006b3f', 'HR-MBQ':'#d68910', 'EB-SBQ':'#7d3c98', BILLETS:'#2874a6', OTHER:'#7f8c8d' };
 const PRODUCT_LABEL = { REBAR:'Rebar', 'HR-MBQ':'MBQ', 'EB-SBQ':'EB (SBQ)', BILLETS:'Billets', OTHER:'Other' };
 
-/* Distinct colors for individual Product IDs on the Gantt. The most-rolled
-   product (by total tons) gets the first color, and so on; same product ID
-   always lands on the same color within a session. */
-const PID_PALETTE = [
-  '#006b3f','#d68910','#2874a6','#7d3c98','#c0392b',
-  '#16a085','#e67e22','#34495e','#1abc9c','#27ae60',
-  '#f39c12','#8e44ad','#a04000','#2c3e50','#e74c3c',
-  '#3498db','#9b59b6','#5d6d7e','#138d75','#cd6155',
-  '#5b2c6f','#7d6608','#0e6251','#7e5109','#0b5345',
-  '#641e16','#1b4f72','#4a235a','#7b7d7d','#196f3d'
-];
+/* Per-category palettes so every rebar PID lands on a green, every MBQ
+   PID on an amber, every SBQ PID on a purple, etc. All shades are dark
+   enough to keep white bar text readable. Within a category the most-
+   rolled PID gets the first (deepest) color and so on. */
+const PID_PALETTES = {
+  REBAR:    ['#1b5e20','#2e7d32','#33691e','#388e3c','#558b2f','#43a047','#0e6251','#0b6e4f','#196f3d','#138d75'],
+  'HR-MBQ': ['#bf360c','#d84315','#e64a19','#e65100','#ef6c00','#f57c00','#a04000','#7e5109','#6e2c00','#b9770e'],
+  'EB-SBQ': ['#4a148c','#6a1b9a','#7b1fa2','#8e24aa','#9c27b0','#ad1457','#5b2c6f','#4a235a','#581845','#7d3c98'],
+  BILLETS:  ['#0d47a1','#1565c0','#1976d2','#1e88e5','#283593','#1a237e','#1b4f72','#1f618d','#2874a6','#154360'],
+  OTHER:    ['#263238','#37474f','#455a64','#546e7a','#3e2723','#4e342e','#5d4037','#2c3e50','#34495e','#566573']
+};
 function buildProductIdColors(rollings){
-  const tons = {};
-  for(const r of rollings) tons[r.productId] = (tons[r.productId]||0) + r.tons;
-  const sorted = Object.keys(tons).sort((a,b) => tons[b] - tons[a]);
+  // Group PIDs by category and assign palette colors in order of total tons.
+  const tons = {}, byCat = {};
+  for(const r of rollings){
+    tons[r.productId] = (tons[r.productId]||0) + r.tons;
+    const cat = r.product || 'OTHER';
+    (byCat[cat] = byCat[cat] || new Set()).add(r.productId);
+  }
   const map = {};
-  sorted.forEach((pid, i) => { map[pid] = PID_PALETTE[i % PID_PALETTE.length]; });
+  for(const cat in byCat){
+    const palette = PID_PALETTES[cat] || PID_PALETTES.OTHER;
+    const pids = Array.from(byCat[cat]).sort((a,b) => (tons[b]||0) - (tons[a]||0));
+    pids.forEach((pid, i) => { map[pid] = palette[i % palette.length]; });
+  }
   return map;
 }
 
@@ -2015,15 +2023,46 @@ function renderGanttCalendar(rollings, pidColors){
     html += '</div>';
   }
 
-  // For each month from firstMonth..lastMonth, render a calendar grid
+  // Pre-compute the week rows we actually want to render. A week is shown
+  // only if at least one of its days has rolling data — this is what
+  // collapses the calendar when the user picks 7d/30d windows where most
+  // weeks are blank. The cell height scales inversely to the resulting
+  // total so a single-week view stays large and readable, while a 90d
+  // span stays compact.
+  const monthsToRender = [];
   let m = new Date(firstMonth);
   while(m <= lastMonth){
     const year = m.getFullYear();
     const mon = m.getMonth();
     const firstOfMonth = new Date(year, mon, 1);
     const daysInMonth = new Date(year, mon+1, 0).getDate();
-    const startDow = firstOfMonth.getDay(); // 0..6
+    const startDow = firstOfMonth.getDay();
     const totalCells = Math.ceil((startDow + daysInMonth)/7) * 7;
+    const weeks = [];
+    for(let i=0; i<totalCells; i++){
+      if(i % 7 === 0) weeks.push([]);
+      const dnum = i - startDow + 1;
+      const isOutside = (dnum < 1 || dnum > daysInMonth);
+      let date = null, dayKey = null, hasData = false;
+      if(!isOutside){
+        date = new Date(year, mon, dnum);
+        dayKey = dstr(date);
+        hasData = !!dayMap[dayKey];
+      }
+      weeks[weeks.length-1].push({dnum, date, dayKey, isOutside, hasData});
+    }
+    const visibleWeeks = weeks.filter(w => w.some(c => c.hasData));
+    if(visibleWeeks.length){
+      monthsToRender.push({year, mon, daysInMonth, weeks: visibleWeeks});
+    }
+    m = new Date(year, mon+1, 1);
+  }
+
+  const totalVisibleWeeks = monthsToRender.reduce((a, mi) => a + mi.weeks.length, 0);
+  const cellH = Math.max(90, Math.min(200, Math.floor(720 / Math.max(1, totalVisibleWeeks))));
+
+  for(const mi of monthsToRender){
+    const {year, mon, daysInMonth, weeks: visibleWeeks} = mi;
 
     // Month-level totals
     let mTons = 0, mHours = 0, mDays = 0;
@@ -2038,60 +2077,59 @@ function renderGanttCalendar(rollings, pidColors){
     html += `<div class="cal-month">
       <div class="cal-title"><span>${monthLong[mon]} ${year} — Mill ${curMill}</span>
         <span class="meta">${fmt0(mDays)} active days · ${fmt0(mHours)} rolling hrs · ${fmt0(mTons)} tons</span></div>
-      <div class="cal-grid">`;
+      <div class="cal-grid" style="--cell-h:${cellH}px">`;
     for(const d of dows) html += `<div class="cal-head">${d}</div>`;
 
     // Track which campaigns we've already labeled in the current week row,
     // so the tons/hours line shows only on the first cell of each row segment.
-    let seenInRow = new Set();
-    for(let i=0;i<totalCells;i++){
-      if(i % 7 === 0) seenInRow = new Set();
-      const dnum = i - startDow + 1;
-      if(dnum < 1 || dnum > daysInMonth){
-        html += '<div class="cal-cell outside"></div>';
-        continue;
-      }
-      const date = new Date(year, mon, dnum);
-      const k = dstr(date);
-      const fw = fiscalWeek(date);
-      const wkLbl = fiscalWeekLabel(fw);
-      const cellTodayCls = (k === todayKey) ? ' today' : '';
-      const entries = dayMap[k];
-      if(!entries || !entries.length){
-        html += `<div class="cal-cell${cellTodayCls}"><span class="wk">${wkLbl}</span><span class="date">${dnum}</span></div>`;
-        continue;
-      }
-      // Sort sessions within the day by start time so the stack reads
-      // chronologically top→bottom.
-      const ordered = entries.slice().sort((a,b) => a.rolling.start - b.rolling.start);
-      const bars = ordered.map(e => {
-        const r = e.rolling;
-        const fill = (pidColors && pidColors[r.productId]) || PRODUCT_COLORS[r.product] || '#7f8c8d';
-        const isFirstSegment = !seenInRow.has(r.key);
-        seenInRow.add(r.key);
-        const flex = Math.max(0.5, e.hoursToday); // protect tiny sessions from disappearing
-        const selCls = STATE.filters.rollingKeyFilter === r.key ? ' selected' : '';
-        // Show meta if bar likely tall enough for two lines
-        const showMeta = isFirstSegment && e.hoursToday >= 2;
-        return `<div class="cal-bar${selCls}" style="background:${fill};flex:${flex.toFixed(2)} 1 0"
-                  data-key="${esc(r.key)}" data-mill="${curMill}"
-                  data-pid="${esc(r.productId)}" data-grade="${esc(r.grade)}" data-disp="${esc(r.disposition)}"
-                  data-rstart="${r.start.toISOString()}" data-rend="${r.end.toISOString()}"
-                  data-rtons="${r.tons.toFixed(1)}" data-rhours="${r.hours.toFixed(1)}" data-rbundles="${r.bundles}"
-                  data-htoday="${e.hoursToday.toFixed(1)}"
-                  data-gap="${r.gapDays==null?'':r.gapDays.toFixed(2)}">
-          <span class="pid">${esc(r.productId)}</span>
-          ${showMeta ? `<span class="meta">${fmt0(r.tons)}t · ${fmt0(r.hours)}h</span>` : ''}
+    for(const week of visibleWeeks){
+      const seenInRow = new Set();
+      for(const cell of week){
+        if(cell.isOutside){
+          html += '<div class="cal-cell outside"></div>';
+          continue;
+        }
+        const date = cell.date;
+        const k = cell.dayKey;
+        const dnum = cell.dnum;
+        const fw = fiscalWeek(date);
+        const wkLbl = fiscalWeekLabel(fw);
+        const cellTodayCls = (k === todayKey) ? ' today' : '';
+        const entries = dayMap[k];
+        if(!entries || !entries.length){
+          html += `<div class="cal-cell${cellTodayCls}"><span class="wk">${wkLbl}</span><span class="date">${dnum}</span></div>`;
+          continue;
+        }
+        // Sort sessions within the day by start time so the stack reads
+        // chronologically top→bottom.
+        const ordered = entries.slice().sort((a,b) => a.rolling.start - b.rolling.start);
+        const bars = ordered.map(e => {
+          const r = e.rolling;
+          const fill = (pidColors && pidColors[r.productId]) || PRODUCT_COLORS[r.product] || '#7f8c8d';
+          const isFirstSegment = !seenInRow.has(r.key);
+          seenInRow.add(r.key);
+          const flex = Math.max(0.5, e.hoursToday);
+          const selCls = STATE.filters.rollingKeyFilter === r.key ? ' selected' : '';
+          const showMeta = isFirstSegment && e.hoursToday >= 2;
+          return `<div class="cal-bar${selCls}" style="background:${fill};flex:${flex.toFixed(2)} 1 0"
+                    data-key="${esc(r.key)}" data-mill="${curMill}"
+                    data-pid="${esc(r.productId)}" data-grade="${esc(r.grade)}" data-disp="${esc(r.disposition)}"
+                    data-rstart="${r.start.toISOString()}" data-rend="${r.end.toISOString()}"
+                    data-rtons="${r.tons.toFixed(1)}" data-rhours="${r.hours.toFixed(1)}" data-rbundles="${r.bundles}"
+                    data-htoday="${e.hoursToday.toFixed(1)}"
+                    data-gap="${r.gapDays==null?'':r.gapDays.toFixed(2)}">
+            <span class="pid">${esc(r.productId)}</span>
+            ${showMeta ? `<span class="meta">${fmt0(r.tons)}t · ${fmt0(r.hours)}h</span>` : ''}
+          </div>`;
+        }).join('');
+        html += `<div class="cal-cell has-data${cellTodayCls}">
+          <span class="wk">${wkLbl}</span>
+          <span class="date">${dnum}</span>
+          <div class="cal-stack">${bars}</div>
         </div>`;
-      }).join('');
-      html += `<div class="cal-cell has-data${cellTodayCls}">
-        <span class="wk">${wkLbl}</span>
-        <span class="date">${dnum}</span>
-        <div class="cal-stack">${bars}</div>
-      </div>`;
+      }
     }
     html += '</div></div>';
-    m = new Date(year, mon+1, 1);
   }
 
   cal.innerHTML = html;
