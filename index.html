@@ -456,7 +456,7 @@ const STATE = {
   // Mill bundle data lives in memory only (too big for localStorage); rollings persist.
   millBundles: { '1': [], '2': [] },
   rollings:    { '1': [], '2': [] },
-  filters: { product: 'ALL', bay: 'ALL', includeHold: true, shipRange: 'day', prodSub: 'runs', ganttMode: 'timeline', ganttWindow: '30', ganttMin: 0, calMill: null, rollingMillFilter: null, rollingKeyFilter: null, detailCat: 'ALL', detailPid: null, detailYear: 'ALL', detailType: 'ALL', detailGrade: 'ALL' },
+  filters: { product: 'ALL', bay: 'ALL', includeHold: true, shipRange: 'day', prodSub: 'runs', ganttMode: 'timeline', ganttWindow: '30', ganttMin: 0, calMill: null, rollingMillFilter: null, rollingKeyFilter: null, detailCat: 'ALL', detailPid: null, detailYear: 'ALL', detailType: 'ALL', detailGroup: 'ALL', detailGrade: 'ALL' },
   asOf: null
 };
 
@@ -610,10 +610,13 @@ function classifyFamily(family){
   return 'OTHER';
 }
 /* Mill-run product IDs use a "1XX size" pattern: 1RD = round, 1FL = flat,
-   1EA/1UA = angle, 1CH = channel, 1RES = rebar, 1BI = billet. */
+   1EA/1UA = angle, 1CH = channel, 1RES = rebar, 1BI = billet. The 1FL REO
+   and 1FL REM variants are reinforcing flats and live under EB-SBQ. */
 function classifyProductId(pid){
   if(!pid) return 'OTHER';
-  const p = String(pid).toUpperCase().replace(/^[12]/,'').trim();
+  const u = String(pid).toUpperCase();
+  if(/[12]\s*FL\s*RE[OM]\b/.test(u)) return 'EB-SBQ';
+  const p = u.replace(/^[12]/,'').trim();
   if(p.startsWith('REBAR') || p.startsWith('RES')) return 'REBAR';
   if(p.startsWith('BI ') || p.startsWith('BILLET')) return 'BILLETS';
   if(p.startsWith('RD ') || p.startsWith('RND')) return 'EB-SBQ';
@@ -623,10 +626,15 @@ function classifyProductId(pid){
 }
 /* Pull the type prefix (1FL, 1RD, 1EA, 1UA, 1CH, 1RES, 1BI, 1SQ — and the
    "2"-leading variants) out of a Product ID string so we can group every
-   size under one type bucket in the Detail Report. Falls back to OTHER. */
+   size under one type bucket in the Detail Report. 1FL REO and 1FL REM
+   are kept as their own types so the SBQ category breaks them out
+   separately. Falls back to OTHER. */
 function extractProductType(pid){
   if(!pid) return 'OTHER';
-  const m = String(pid).toUpperCase().match(/[12](FL|RD|RND|EA|UA|CH|RES|REBAR|BI|BILLET|SQ)/);
+  const u = String(pid).toUpperCase();
+  const reo = u.match(/[12]\s*FL\s*(RE[OM])\b/);
+  if(reo) return reo[0][0] + 'FL' + reo[1]; // "1FLREO" / "1FLREM"
+  const m = u.match(/[12](FL|RD|RND|EA|UA|CH|RES|REBAR|BI|BILLET|SQ)/);
   if(!m) return 'OTHER';
   // Normalize a few synonyms so 1RND/1RD and 1RES/1REBAR collapse together.
   const lead = m[0][0];
@@ -635,6 +643,34 @@ function extractProductType(pid){
   if(suffix === 'REBAR') suffix = 'RES';
   if(suffix === 'BILLET') suffix = 'BI';
   return lead + suffix;
+}
+/* Pretty-print a type code for a chip label: "1FLREO" -> "1FL REO". */
+function labelProductType(t){ return String(t).replace(/^([12]FL)(RE[OM])$/, '$1 $2'); }
+/* Convert a metric rebar dimension (mm) to its US bar number: 9.5 -> "#3",
+   12.7 -> "#4", ... 35.8 -> "#11". Returns null if the value is too far
+   from any known bar size. */
+function rebarSizeLabel(mm){
+  const n = parseFloat(mm);
+  if(isNaN(n)) return null;
+  const map = [
+    [9.5,3],[12.7,4],[15.9,5],[19.1,6],[22.2,7],
+    [25.4,8],[28.7,9],[32.3,10],[32.0,10],[35.8,11]
+  ];
+  let best = null, bestD = Infinity;
+  for(const [k,v] of map){ const d = Math.abs(k - n); if(d < bestD){ bestD = d; best = v; } }
+  return bestD < 0.6 ? '#' + best : null;
+}
+/* Extract the leading numeric dimension after the type prefix: for
+   "1EA 2.000X0.125" returns "2.000" (leg length); for
+   "1FL 02.000X0.250" returns "02.000" (width); for
+   "1FLREM 076.2X14.17" returns "076.2". */
+function extractDimensionGroup(pid){
+  if(!pid) return null;
+  const stripped = String(pid).toUpperCase()
+    .replace(/^[12](FL|RD|RND|EA|UA|CH|RES|REBAR|BI|BILLET|SQ)\s*(RE[OM])?\s*/, '')
+    .trim();
+  const m = stripped.match(/^([\d.]+)\s*X/);
+  return m ? m[1] : null;
 }
 const PRODUCT_COLORS = { REBAR:'#006b3f', 'HR-MBQ':'#d68910', 'EB-SBQ':'#7d3c98', BILLETS:'#2874a6', OTHER:'#7f8c8d' };
 const PRODUCT_LABEL = { REBAR:'Rebar', 'HR-MBQ':'MBQ', 'EB-SBQ':'EB (SBQ)', BILLETS:'Billets', OTHER:'Other' };
@@ -1567,6 +1603,9 @@ function renderDetailReport(allRolls, pidColors){
     document.getElementById('detailSummary').textContent = '';
     return;
   }
+  // Re-run the classifier on the cached rolls so any rule changes (e.g. 1FL
+  // REO/REM moving from MBQ to SBQ) take effect without re-importing.
+  for(const r of allRolls){ r.product = classifyProductId(r.productId); }
   const cat = STATE.filters.detailCat || 'ALL';
   const pid = STATE.filters.detailPid;
   const yr = STATE.filters.detailYear || 'ALL';
@@ -1636,20 +1675,67 @@ function renderDetailReport(allRolls, pidColors){
       const rolls = byType[t];
       const tt = rolls.reduce((a,r)=>a+r.tons,0);
       const sizes = new Set(rolls.map(r=>r.productId)).size;
-      html += `<button class="chip ${tSel===t?'active':''}" data-detail-type="${esc(t)}">${esc(t)}<span class="count">${sizes} sizes · ${fmt0(tt)}t</span></button>`;
+      html += `<button class="chip ${tSel===t?'active':''}" data-detail-type="${esc(t)}">${esc(labelProductType(t))}<span class="count">${sizes} sizes · ${fmt0(tt)}t</span></button>`;
     }
     html += '</div>';
   }
 
-  // Apply the type filter — this drives the Product chip list below, so
-  // selecting "1FL" shows only the individual flat sizes.
-  const scope = (tSel === 'ALL') ? catScope : (byType[tSel] || []);
+  // If only one type is in scope (e.g. REBAR -> 1RES), treat that as the
+  // effective type so the Group slicer (bar size, leg length, width)
+  // renders without an extra click.
+  const effT = (tSel === 'ALL' && typesSorted.length === 1) ? typesSorted[0] : tSel;
+  const typeScope = (effT === 'ALL') ? catScope : (byType[effT] || []);
 
-  // Slicer row 3: product family chips (sorted by total tons within scope)
+  // Slicer row 2b: GROUP chips — bucket by leading numeric dimension after
+  // the type prefix. For 1EA/1UA that's leg length, for 1FL that's width,
+  // for 1RES it's the bar size in mm (re-labeled as #3..#11).
+  const grpSel = STATE.filters.detailGroup || 'ALL';
+  let scope = typeScope;
+  if(effT !== 'ALL'){
+    const byGrp = {};
+    for(const r of typeScope){
+      const g = extractDimensionGroup(r.productId) || '—';
+      (byGrp[g] = byGrp[g] || []).push(r);
+    }
+    const grpsSorted = Object.keys(byGrp).sort((a,b) => {
+      const na = parseFloat(a), nb = parseFloat(b);
+      if(!isNaN(na) && !isNaN(nb)) return na - nb;
+      return a.localeCompare(b);
+    });
+    if(grpsSorted.length > 1){
+      const grpLbl = (effT === '1EA' || effT === '1UA') ? 'Leg'
+                   : (effT === '1RES') ? 'Bar Size'
+                   : 'Width';
+      html += `<div class="slicer-row"><span class="label">${grpLbl}</span>`;
+      const totT = typeScope.reduce((a,r)=>a+r.tons,0);
+      html += `<button class="chip ${grpSel==='ALL'?'active':''}" data-detail-grp="ALL">All<span class="count">${grpsSorted.length} · ${fmt0(totT)}t</span></button>`;
+      for(const g of grpsSorted){
+        const rolls = byGrp[g];
+        const tt = rolls.reduce((a,r)=>a+r.tons,0);
+        const sizes = new Set(rolls.map(r=>r.productId)).size;
+        let chipLbl;
+        if(g === '—') chipLbl = '—';
+        else if(effT === '1RES') chipLbl = rebarSizeLabel(g) || `${labelProductType(effT)} ${g}`;
+        else chipLbl = `${labelProductType(effT)} ${g}`;
+        html += `<button class="chip ${grpSel===g?'active':''}" data-detail-grp="${esc(g)}">${esc(chipLbl)}<span class="count">${sizes} · ${fmt0(tt)}t</span></button>`;
+      }
+      html += '</div>';
+      scope = (grpSel === 'ALL') ? typeScope : (byGrp[grpSel] || typeScope);
+    }
+  }
+
+  // Slicer row 3: product family chips. Sorted by leading dimension when a
+  // type is in play (so rebar comes out #3->#11), otherwise by total tons.
   const byPid = {};
   for(const r of scope){ (byPid[r.productId] = byPid[r.productId] || []).push(r); }
-  const pidsSorted = Object.keys(byPid).sort((a,b) =>
-    byPid[b].reduce((x,r)=>x+r.tons,0) - byPid[a].reduce((x,r)=>x+r.tons,0));
+  const pidsSorted = Object.keys(byPid).sort((a,b) => {
+    if(effT !== 'ALL'){
+      const da = parseFloat(extractDimensionGroup(a));
+      const db = parseFloat(extractDimensionGroup(b));
+      if(!isNaN(da) && !isNaN(db) && da !== db) return da - db;
+    }
+    return byPid[b].reduce((x,r)=>x+r.tons,0) - byPid[a].reduce((x,r)=>x+r.tons,0);
+  });
 
   html += '<div class="slicer-row products"><span class="label">Size</span>';
   html += `<button class="chip ${!pid?'active':''}" data-detail-pid="">All<span class="count">${pidsSorted.length} sizes</span></button>`;
@@ -1780,6 +1866,7 @@ function renderDetailReport(allRolls, pidColors){
     STATE.filters.detailYear = c.dataset.detailYr;
     STATE.filters.detailCat = 'ALL';
     STATE.filters.detailType = 'ALL';
+    STATE.filters.detailGroup = 'ALL';
     STATE.filters.detailPid = null;
     STATE.filters.detailGrade = 'ALL';
     saveState(); renderDetailReport(allRolls, pidColors);
@@ -1787,12 +1874,20 @@ function renderDetailReport(allRolls, pidColors){
   body.querySelectorAll('.chip[data-detail-cat]').forEach(c => c.addEventListener('click', () => {
     STATE.filters.detailCat = c.dataset.detailCat;
     STATE.filters.detailType = 'ALL';
+    STATE.filters.detailGroup = 'ALL';
     STATE.filters.detailPid = null;
     STATE.filters.detailGrade = 'ALL';
     saveState(); renderDetailReport(allRolls, pidColors);
   }));
   body.querySelectorAll('.chip[data-detail-type]').forEach(c => c.addEventListener('click', () => {
     STATE.filters.detailType = c.dataset.detailType;
+    STATE.filters.detailGroup = 'ALL';
+    STATE.filters.detailPid = null;
+    STATE.filters.detailGrade = 'ALL';
+    saveState(); renderDetailReport(allRolls, pidColors);
+  }));
+  body.querySelectorAll('.chip[data-detail-grp]').forEach(c => c.addEventListener('click', () => {
+    STATE.filters.detailGroup = c.dataset.detailGrp;
     STATE.filters.detailPid = null;
     STATE.filters.detailGrade = 'ALL';
     saveState(); renderDetailReport(allRolls, pidColors);
