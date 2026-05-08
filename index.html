@@ -941,7 +941,7 @@ function parseMillRuns(rows, mill){
    campaign instead of dozens of micro-sessions). */
 function computeRollings(bundles, gapMergeHours){
   if(!bundles || !bundles.length) return [];
-  if(gapMergeHours == null) gapMergeHours = 24;
+  if(gapMergeHours == null) gapMergeHours = 72;
   const sorted = [...bundles].sort((a,b) => a.date - b.date);
 
   // Pass 1: collect raw contiguous blocks.
