@@ -178,9 +178,9 @@
   .cal-cell .date{position:absolute;top:3px;right:7px;font-weight:600;color:var(--gray-700);font-size:12px;z-index:2}
   .cal-cell .wk{position:absolute;top:3px;left:7px;font-size:9px;color:var(--gray-500);font-weight:700;letter-spacing:1px;z-index:2}
   .cal-cell.has-data{cursor:pointer}
-  .cal-cell .label{position:absolute;left:0;right:0;bottom:0;top:22px;color:#fff;font-weight:700;font-size:10.5px;display:flex;flex-direction:column;justify-content:center;align-items:flex-start;line-height:1.3;padding:3px 7px}
-  .cal-cell .label .pid{font-weight:800;font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;width:100%}
-  .cal-cell .label .meta{font-size:9.5px;font-weight:500;opacity:.95;margin-top:1px}
+  .cal-cell .label{position:absolute;left:0;right:0;bottom:0;top:22px;color:#fff;font-weight:700;display:flex;flex-direction:column;justify-content:center;align-items:flex-start;line-height:1.2;padding:4px 8px}
+  .cal-cell .label .pid{font-weight:800;font-size:15px;letter-spacing:.3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;width:100%}
+  .cal-cell .label .meta{font-size:11px;font-weight:600;opacity:.95;margin-top:3px}
   .cal-cell .more{position:absolute;top:22px;right:4px;font-size:9px;color:#fff;font-weight:700;background:rgba(0,0,0,.32);padding:1px 5px;border-radius:8px;z-index:2}
   .cal-cell.has-data:hover{filter:brightness(1.06)}
   .cal-cell.selected{outline:2px solid #000;outline-offset:-2px;z-index:1}
@@ -1940,10 +1940,16 @@ function renderGanttCalendar(rollings, pidColors){
       <div class="cal-grid">`;
     for(const d of dows) html += `<div class="cal-head">${d}</div>`;
 
+    // Track the previous cell's campaign key (resets at each Sunday and
+    // on outside/empty cells) so tons/hours show only on the first cell
+    // of each row segment, not on every continuation day.
+    let prevKey = null;
     for(let i=0;i<totalCells;i++){
+      if(i % 7 === 0) prevKey = null;            // new week row resets the chain
       const dnum = i - startDow + 1;
       if(dnum < 1 || dnum > daysInMonth){
         html += '<div class="cal-cell outside"></div>';
+        prevKey = null;
         continue;
       }
       const date = new Date(year, mon, dnum);
@@ -1954,6 +1960,7 @@ function renderGanttCalendar(rollings, pidColors){
       const entries = dayMap[k];
       if(!entries || !entries.length){
         html += `<div class="cal-cell${cellTodayCls}"><span class="wk">${wkLbl}</span><span class="date">${dnum}</span></div>`;
+        prevKey = null;
         continue;
       }
       const top = entries[0];
@@ -1961,9 +1968,10 @@ function renderGanttCalendar(rollings, pidColors){
       const fill = (pidColors && pidColors[r.productId]) || PRODUCT_COLORS[r.product] || '#7f8c8d';
       const selCls = STATE.filters.rollingKeyFilter === r.key ? ' selected' : '';
       const moreN = entries.length - 1;
-      // Each cell shows the dominant session's TOTAL tons/hours, not the
-      // slice that fell on today — same number repeats across every day
-      // the session covers, making multi-day campaigns easy to read.
+      // Show tons/hours only on the first cell of each row segment for this
+      // campaign — continuation cells just carry the (now larger) Product ID.
+      const isFirstSegment = (prevKey !== r.key);
+      prevKey = r.key;
       html += `<div class="cal-cell has-data${cellTodayCls}${selCls}" data-key="${esc(r.key)}" data-day="${k}"
                   data-pid="${esc(r.productId)}" data-grade="${esc(r.grade)}" data-disp="${esc(r.disposition)}"
                   data-rstart="${r.start.toISOString()}" data-rend="${r.end.toISOString()}"
@@ -1973,7 +1981,7 @@ function renderGanttCalendar(rollings, pidColors){
         <span class="date">${dnum}</span>
         <div class="label" style="background:${fill}">
           <span class="pid">${esc(r.productId)}</span>
-          <span class="meta">${fmt0(r.tons)}t · ${fmt0(r.hours)}h</span>
+          ${isFirstSegment ? `<span class="meta">${fmt0(r.tons)}t · ${fmt0(r.hours)}h</span>` : ''}
         </div>
         ${moreN>0?`<span class="more">+${moreN}</span>`:''}
       </div>`;
