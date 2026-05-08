@@ -453,7 +453,7 @@ const STATE = {
   // Mill bundle data lives in memory only (too big for localStorage); rollings persist.
   millBundles: { '1': [], '2': [] },
   rollings:    { '1': [], '2': [] },
-  filters: { product: 'ALL', bay: 'ALL', includeHold: true, shipRange: 'day', prodSub: 'runs', ganttMode: 'timeline', ganttWindow: '30', ganttMin: 0, calMill: null, rollingMillFilter: null, rollingKeyFilter: null, detailCat: 'ALL', detailPid: null },
+  filters: { product: 'ALL', bay: 'ALL', includeHold: true, shipRange: 'day', prodSub: 'runs', ganttMode: 'timeline', ganttWindow: '30', ganttMin: 0, calMill: null, rollingMillFilter: null, rollingKeyFilter: null, detailCat: 'ALL', detailPid: null, detailYear: 'ALL' },
   asOf: null
 };
 
@@ -1423,7 +1423,7 @@ function renderMillRuns(){
     : '';
   document.getElementById('rollingFilter').innerHTML = flt;
 
-  const showSlice = tableRows.slice(0,500);
+  const showSlice = tableRows.slice(0,5000);
   document.getElementById('tblRollings').innerHTML = `
     <thead><tr>
       <th style="width:28px"></th>
@@ -1486,9 +1486,9 @@ function renderMillRuns(){
       </tr>`;
     }).join('')}</tbody>
   `;
-  if(tableRows.length > 500){
+  if(tableRows.length > 5000){
     document.getElementById('tblRollings').insertAdjacentHTML('beforeend',
-      `<tfoot><tr><td colspan="14" style="color:var(--gray-500);text-align:center;padding:10px">Showing first 500 of ${fmt0(tableRows.length)} campaigns — narrow the window or click a Gantt bar to drill in.</td></tr></tfoot>`);
+      `<tfoot><tr><td colspan="14" style="color:var(--gray-500);text-align:center;padding:10px">Showing first 5,000 of ${fmt0(tableRows.length)} campaigns — narrow the window or use the Detail Report's year slicer to drill in.</td></tr></tfoot>`);
   }
   // Wire expand/collapse
   document.querySelectorAll('#tblRollings .exp-btn').forEach(btn => btn.addEventListener('click', e => {
@@ -1551,10 +1551,19 @@ function renderDetailReport(allRolls, pidColors){
   }
   const cat = STATE.filters.detailCat || 'ALL';
   const pid = STATE.filters.detailPid;
+  const yr = STATE.filters.detailYear || 'ALL';
 
-  // Group rollings by category
+  // Compute the set of fiscal years that appear in the data
+  const yearSet = new Set();
+  for(const r of allRolls){ yearSet.add(fiscalWeek(r.start).year); }
+  const years = Array.from(yearSet).sort((a,b) => b - a); // newest first
+
+  // Filter by selected fiscal year (year applies before category & product)
+  const yrScoped = (yr === 'ALL') ? allRolls : allRolls.filter(r => fiscalWeek(r.start).year === Number(yr));
+
+  // Group rollings by category (within the year scope)
   const byCat = {};
-  for(const r of allRolls){
+  for(const r of yrScoped){
     const c = r.product || 'OTHER';
     (byCat[c] = byCat[c] || []).push(r);
   }
@@ -1562,9 +1571,22 @@ function renderDetailReport(allRolls, pidColors){
 
   let html = '';
 
+  // Slicer row 0: fiscal year (only show if data spans multiple years)
+  if(years.length >= 1){
+    html += '<div class="slicer-row"><span class="label">FY Year</span>';
+    const allTons = allRolls.reduce((a,r)=>a+r.tons,0);
+    html += `<button class="chip ${yr==='ALL'?'active':''}" data-detail-yr="ALL">All<span class="count">${fmt0(allRolls.length)} sess · ${fmt0(allTons)}t</span></button>`;
+    for(const y of years){
+      const ys = allRolls.filter(r => fiscalWeek(r.start).year === y);
+      const yt = ys.reduce((a,r)=>a+r.tons,0);
+      html += `<button class="chip ${String(yr)===String(y)?'active':''}" data-detail-yr="${y}">FY${y}<span class="count">${fmt0(ys.length)} · ${fmt0(yt)}t</span></button>`;
+    }
+    html += '</div>';
+  }
+
   // Slicer row 1: category chips
   html += '<div class="slicer-row"><span class="label">Category</span>';
-  const totalRolls = allRolls.length, totalTons = allRolls.reduce((a,r)=>a+r.tons,0);
+  const totalRolls = yrScoped.length, totalTons = yrScoped.reduce((a,r)=>a+r.tons,0);
   html += `<button class="chip ${cat==='ALL'?'active':''}" data-detail-cat="ALL">All<span class="count">${fmt0(totalRolls)} sessions · ${fmt0(totalTons)}t</span></button>`;
   for(const c of catOrder){
     const rolls = byCat[c];
@@ -1574,8 +1596,8 @@ function renderDetailReport(allRolls, pidColors){
   }
   html += '</div>';
 
-  // Filter to category
-  const scope = (cat === 'ALL') ? allRolls : (byCat[cat] || []);
+  // Filter to category (within the year scope)
+  const scope = (cat === 'ALL') ? yrScoped : (byCat[cat] || []);
 
   // Slicer row 2: product family chips (sorted by total tons within category)
   const byPid = {};
@@ -1660,32 +1682,14 @@ function renderDetailReport(allRolls, pidColors){
         <td class="num">${fmt0(r.heats)}</td>
         <td>${esc(r.crews)}</td>
       </tr>
-      <tr class="d-detail" data-i="${i}" style="display:none">
-        <td></td>
-        <td colspan="12" style="background:var(--gray-50);padding:10px 14px">
-          <div style="font-size:11px;color:var(--gray-500);letter-spacing:1px;font-weight:700;text-transform:uppercase;margin-bottom:6px">Lengths run during this session — ${fmt0(r.lengthCount)} length${r.lengthCount===1?'':'s'}</div>
-          <table class="length-detail" style="background:#fff">
-            <thead><tr><th>Length</th><th class="num">mm</th><th class="num">Bundles</th><th class="num">Pieces</th><th class="num">Tons</th><th class="num">% of session</th><th>First</th><th>Last</th></tr></thead>
-            <tbody>${(r.lengthBreakdown||[]).map(l => `
-              <tr>
-                <td><b>${mmToFtIn(l.length)}</b></td>
-                <td class="num">${fmt0(l.length)}</td>
-                <td class="num">${fmt0(l.bundles)}</td>
-                <td class="num">${fmt0(l.pieces)}</td>
-                <td class="num">${fmt1(l.tons)}</td>
-                <td class="num">${r.tons?Math.round(l.tons/r.tons*100):0}%</td>
-                <td>${l.start ? l.start.toISOString().slice(0,16).replace('T',' ') : '—'}</td>
-                <td>${l.end ? l.end.toISOString().slice(0,16).replace('T',' ') : '—'}</td>
-              </tr>`).join('')}
-            </tbody>
-          </table>
-        </td>
-      </tr>`;
+      <tr class="d-detail" data-i="${i}" style="display:none"><td></td><td colspan="12" class="d-slot" style="background:var(--gray-50);padding:10px 14px"></td></tr>`;
     });
     html += '</tbody></table>';
   }
 
   body.innerHTML = html;
+  // Stash sessions on the body so the lazy-expand handler can grab the right one
+  body._sessions = (pid ? (byPid[pid]||[]).slice().sort((a,b) => b.start - a.start) : null);
 
   // Header summary (right side of card)
   document.getElementById('detailSummary').innerHTML =
@@ -1694,6 +1698,12 @@ function renderDetailReport(allRolls, pidColors){
     `${PRODUCT_LABEL[cat]||cat}: <b>${pidsSorted.length}</b> product IDs`;
 
   // Wire chip clicks
+  body.querySelectorAll('.chip[data-detail-yr]').forEach(c => c.addEventListener('click', () => {
+    STATE.filters.detailYear = c.dataset.detailYr;
+    STATE.filters.detailCat = 'ALL';
+    STATE.filters.detailPid = null;
+    saveState(); renderDetailReport(allRolls, pidColors);
+  }));
   body.querySelectorAll('.chip[data-detail-cat]').forEach(c => c.addEventListener('click', () => {
     STATE.filters.detailCat = c.dataset.detailCat;
     STATE.filters.detailPid = null; // reset product when category changes
@@ -1707,12 +1717,35 @@ function renderDetailReport(allRolls, pidColors){
     STATE.filters.detailPid = row.dataset.detailPid;
     saveState(); renderDetailReport(allRolls, pidColors);
   }));
+  // Lazy-render the per-session length breakdown only when the user expands
   body.querySelectorAll('.exp-btn[data-detail-i]').forEach(btn => btn.addEventListener('click', e => {
     e.stopPropagation();
     const i = btn.dataset.detailI;
     const det = body.querySelector(`tr.d-detail[data-i="${i}"]`);
     if(!det) return;
     const open = det.style.display !== 'none';
+    if(!open && !det._built && body._sessions){
+      const r = body._sessions[Number(i)];
+      const slot = det.querySelector('.d-slot');
+      slot.innerHTML = `
+        <div style="font-size:11px;color:var(--gray-500);letter-spacing:1px;font-weight:700;text-transform:uppercase;margin-bottom:6px">Lengths run during this session — ${fmt0(r.lengthCount)} length${r.lengthCount===1?'':'s'}</div>
+        <table class="length-detail" style="background:#fff">
+          <thead><tr><th>Length</th><th class="num">mm</th><th class="num">Bundles</th><th class="num">Pieces</th><th class="num">Tons</th><th class="num">% of session</th><th>First</th><th>Last</th></tr></thead>
+          <tbody>${(r.lengthBreakdown||[]).map(l => `
+            <tr>
+              <td><b>${mmToFtIn(l.length)}</b></td>
+              <td class="num">${fmt0(l.length)}</td>
+              <td class="num">${fmt0(l.bundles)}</td>
+              <td class="num">${fmt0(l.pieces)}</td>
+              <td class="num">${fmt1(l.tons)}</td>
+              <td class="num">${r.tons?Math.round(l.tons/r.tons*100):0}%</td>
+              <td>${l.start ? l.start.toISOString().slice(0,16).replace('T',' ') : '—'}</td>
+              <td>${l.end ? l.end.toISOString().slice(0,16).replace('T',' ') : '—'}</td>
+            </tr>`).join('')}
+          </tbody>
+        </table>`;
+      det._built = true;
+    }
     det.style.display = open ? 'none' : 'table-row';
     btn.textContent = open ? '▶' : '▼';
   }));
