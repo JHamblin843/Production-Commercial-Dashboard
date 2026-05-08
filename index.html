@@ -668,10 +668,15 @@ function rebarSizeLabel(mm){
 /* Extract the leading numeric dimension after the type prefix: for
    "1EA 2.000X0.125" returns "2.000" (leg length); for
    "1FL 02.000X0.250" returns "02.000" (width); for
-   "1FLREM 076.2X14.17" returns "076.2". */
+   "1FLREM 076.2X14.17" returns "076.2"; for "1REBAR 04-60" or
+   "1RES 04-60" returns "04" (the bar number). */
 function extractDimensionGroup(pid){
   if(!pid) return null;
-  const stripped = String(pid).toUpperCase()
+  const u = String(pid).toUpperCase();
+  // Rebar PIDs use a NN-GG format (bar number - grade) instead of NNNxNNN.
+  const reb = u.match(/[12]\s*(?:REBAR|RES)\s*(\d{1,2})\s*[-X]/);
+  if(reb) return reb[1];
+  const stripped = u
     .replace(/^[12](FL|RD|RND|EA|UA|CH|RES|REBAR|BI|BILLET|SQ)\s*(RE[OM])?\s*/, '')
     .trim();
   const m = stripped.match(/^([\d.]+)\s*X/);
@@ -1732,7 +1737,12 @@ function renderDetailReport(allRolls, pidColors){
         const sizes = new Set(rolls.map(r=>r.productId)).size;
         let chipLbl;
         if(g === '—') chipLbl = '—';
-        else if(effT === '1RES') chipLbl = rebarSizeLabel(g) || `${labelProductType(effT)} ${g}`;
+        else if(effT === '1RES'){
+          // Either an explicit bar number ("04") or a metric mm value
+          // ("12.7"). Prefer the explicit bar number when present.
+          const barNum = /^\d{1,2}$/.test(g) ? '#' + parseInt(g,10) : null;
+          chipLbl = barNum || rebarSizeLabel(g) || `${labelProductType(effT)} ${g}`;
+        }
         else chipLbl = `${labelProductType(effT)} ${g}`;
         html += `<button class="chip ${grpSel===g?'active':''}" data-detail-grp="${esc(g)}">${esc(chipLbl)}<span class="count">${sizes} · ${fmt0(tt)}t</span></button>`;
       }
