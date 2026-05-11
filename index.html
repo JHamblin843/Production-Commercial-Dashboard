@@ -164,33 +164,87 @@
 
   /* Month-grid calendar mode */
   #ganttCalendar{padding:6px}
-  .calmill-controls{display:flex;gap:6px;align-items:center;padding:4px 4px 12px;font-size:13px}
-  .cal-month{margin:0 0 26px}
-  .cal-title{font-size:14px;font-weight:700;color:var(--green-d);margin:0 0 8px;display:flex;justify-content:space-between;align-items:baseline}
-  .cal-title .meta{font-size:12px;color:var(--gray-500);font-weight:500}
-  .cal-grid{display:grid;grid-template-columns:repeat(7,1fr);border:1px solid var(--gray-200);border-radius:6px;overflow:hidden;background:#fff}
-  .cal-head{background:var(--gray-50);padding:6px 0;text-align:center;font-size:11px;font-weight:700;color:var(--gray-500);letter-spacing:1.5px;border-bottom:1px solid var(--gray-200)}
-  .cal-cell{height:var(--cell-h, 96px);border-right:1px solid var(--gray-100);border-bottom:1px solid var(--gray-100);position:relative;padding:0;font-size:11px;background:#fff;overflow:hidden}
-  .cal-cell.outside{background:#fafbfb;color:var(--gray-200)}
-  .cal-cell.today{outline:2px solid var(--green);outline-offset:-2px;z-index:1}
-  .cal-cell .date{position:absolute;top:3px;right:7px;font-weight:600;color:var(--gray-700);font-size:12px;z-index:2}
-  .cal-cell .wk{position:absolute;top:3px;left:7px;font-size:9px;color:var(--gray-500);font-weight:700;letter-spacing:1px;z-index:2}
-  .cal-cell.has-data{cursor:default}
-  /* Each cell now hosts a vertical stack of bars (one per session that
-     overlapped that day). Bar heights are flex-weighted by hoursToday,
-     but each bar gets a readable minimum height — when more sessions
-     stack up than will fit, the cell shows a thin scrollbar so every
-     session stays accessible. */
-  .cal-stack{position:absolute;left:0;right:0;top:22px;bottom:0;display:flex;flex-direction:column;overflow-y:auto;scrollbar-width:thin;scrollbar-color:rgba(0,0,0,.28) transparent}
-  .cal-stack::-webkit-scrollbar{width:6px}
-  .cal-stack::-webkit-scrollbar-thumb{background:rgba(0,0,0,.28);border-radius:3px}
-  .cal-stack::-webkit-scrollbar-track{background:transparent}
-  .cal-bar{color:#fff;font-weight:700;display:flex;flex-direction:column;justify-content:center;line-height:1.2;padding:3px 9px;overflow:hidden;cursor:pointer;border-bottom:1px solid rgba(255,255,255,.22);min-height:30px;text-shadow:0 1px 2px rgba(0,0,0,.18)}
-  .cal-bar:last-child{border-bottom:none}
-  .cal-bar .pid{font-weight:800;font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;letter-spacing:.2px}
-  .cal-bar .meta{font-size:11px;font-weight:600;opacity:.95}
-  .cal-bar:hover{filter:brightness(1.08)}
-  .cal-bar.selected{outline:1.5px solid #000;outline-offset:-1.5px;z-index:2}
+
+  /* ===== Gantt toolbar (Mill / Period / View) ===== */
+  .gantt-toolbar{background:#fff;border:1px solid var(--gray-200);border-radius:10px;padding:12px 16px;display:flex;gap:24px;align-items:center;flex-wrap:wrap;margin-bottom:14px}
+  .gantt-toolbar .ctrl-grp{display:flex;align-items:center;gap:8px}
+  .gantt-toolbar .ctrl-grp-period{flex:1;min-width:280px;justify-content:flex-start}
+  .gantt-toolbar .ctrl-lbl{color:var(--gray-500);font-size:11px;letter-spacing:2px;font-weight:700;margin-right:4px}
+  .gantt-toolbar .mill-chip{display:inline-flex;align-items:center;gap:6px}
+  .gantt-toolbar .mill-dot{display:inline-block;width:10px;height:10px;border-radius:50%;background:var(--gray-300)}
+  .gantt-toolbar .mill-chip .dot-1{background:#2e7d32}
+  .gantt-toolbar .mill-chip .dot-2{background:#1976d2}
+  .gantt-toolbar .mill-chip.active .mill-dot{box-shadow:0 0 0 1.5px rgba(255,255,255,.7)}
+  .gantt-toolbar .step-btn{width:36px;height:36px;border:1px solid var(--gray-200);background:#fff;border-radius:8px;cursor:pointer;font-size:14px;color:var(--gray-700);display:inline-flex;align-items:center;justify-content:center;transition:background .12s}
+  .gantt-toolbar .step-btn:hover{background:var(--gray-50)}
+  .gantt-toolbar .period-label{flex:1;min-width:200px;background:var(--gray-50);border:1px solid var(--gray-200);border-radius:8px;padding:8px 14px;font-weight:700;font-size:13px;color:var(--gray-700);text-align:center}
+
+  /* ===== Gantt KPI strip (4 cards) ===== */
+  .gantt-kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-bottom:14px}
+  .gantt-kpis .kpi{background:#fff;border:1px solid var(--gray-200);border-radius:10px;padding:14px 18px;border-left:4px solid var(--green);position:relative;overflow:hidden}
+  .gantt-kpis .kpi.mill-1{border-left-color:#2e7d32}
+  .gantt-kpis .kpi.mill-2{border-left-color:#1976d2}
+  .gantt-kpis .kpi.combined{border-left-color:#37474f}
+  .gantt-kpis .kpi h3{font-size:11px;letter-spacing:2px;color:var(--gray-500);font-weight:700;margin:0 0 6px;text-transform:uppercase}
+  .gantt-kpis .kpi .val{font-size:30px;font-weight:800;color:var(--gray-700);line-height:1.05}
+  .gantt-kpis .kpi .val small{font-size:13px;color:var(--gray-500);font-weight:600;margin-left:4px}
+  .gantt-kpis .kpi .sub{font-size:12px;color:var(--gray-500);margin-top:4px}
+  .gantt-kpis .trend{display:inline-flex;align-items:center;gap:3px;font-weight:700;font-size:12px}
+  .gantt-kpis .trend.up{color:#1b5e20}
+  .gantt-kpis .trend.down{color:#b71c1c}
+  .gantt-kpis .trend.flat{color:var(--gray-500)}
+
+  /* ===== Gantt chart layout (horizontal Mill 1 / Mill 2 rows) ===== */
+  .gantt-chart{position:relative;background:#fff}
+  .gantt-chart-title{display:flex;align-items:center;justify-content:space-between;padding:10px 4px 14px;font-size:12px;letter-spacing:2px;font-weight:700;color:var(--gray-500);text-transform:uppercase}
+  .gantt-chart-title .legend{display:inline-flex;gap:14px;font-size:11px;letter-spacing:1px;color:var(--gray-500);text-transform:uppercase}
+  .gantt-chart-title .legend .lg-item{display:inline-flex;align-items:center;gap:6px}
+  .gantt-chart-title .legend .sw{display:inline-block;width:14px;height:10px;border-radius:2px}
+  .gantt-chart-title .legend .sw.completed{background:#a5d6a7;border:1px solid #66bb6a}
+  .gantt-chart-title .legend .sw.scheduled{background:#2e7d32}
+  .gantt-chart-title .legend .sw.in-progress{background:repeating-linear-gradient(45deg,#0d4e1f,#0d4e1f 4px,#1b5e20 4px,#1b5e20 8px)}
+  .gantt-chart-title .legend .sw.today{background:#d32f2f;width:3px;border-radius:1px;height:14px}
+
+  .gantt-frame{display:grid;grid-template-columns:130px 1fr;border:1px solid var(--gray-200);border-radius:6px;overflow:hidden;background:#fff}
+  .gantt-frame .gx-side{background:var(--gray-50);border-right:1px solid var(--gray-200);padding:8px 12px;font-size:11px;letter-spacing:1.5px;color:var(--gray-500);font-weight:700;text-transform:uppercase;display:flex;flex-direction:column;justify-content:center;min-height:46px}
+  .gantt-frame .gx-side.row-mill{font-size:13px;color:var(--gray-700);font-weight:800;letter-spacing:.5px;text-transform:none;border-top:1px solid var(--gray-200)}
+  .gantt-frame .gx-side.row-mill .submeta{font-size:10px;color:var(--gray-500);font-weight:600;letter-spacing:1.5px;margin-top:2px;text-transform:uppercase}
+  .gantt-frame .gx-side.row-mill .stripe{display:inline-block;width:6px;height:24px;border-radius:2px;vertical-align:middle;margin-right:6px;background:#2e7d32}
+  .gantt-frame .gx-side.row-mill.mill-2 .stripe{background:#1976d2}
+
+  .gx-weeks{display:flex;border-bottom:1px solid var(--gray-200);background:var(--gray-50)}
+  .gx-weeks .wk-cell{padding:6px 0;text-align:center;font-size:11px;letter-spacing:2px;color:var(--gray-500);font-weight:700;border-right:1px dashed var(--gray-200);text-transform:uppercase}
+  .gx-weeks .wk-cell:last-child{border-right:none}
+  .gx-days{display:flex;border-bottom:1px solid var(--gray-200);background:#fff}
+  .gx-days .dy-cell{flex:1;text-align:center;padding:4px 0 6px;font-size:10px;border-right:1px solid var(--gray-100)}
+  .gx-days .dy-cell:last-child{border-right:none}
+  .gx-days .dy-cell .dow{display:block;color:var(--gray-500);letter-spacing:.5px;font-weight:700;text-transform:uppercase;font-size:9px}
+  .gx-days .dy-cell .dnum{display:block;color:var(--gray-700);font-weight:700;font-size:13px;margin-top:2px}
+  .gx-days .dy-cell.today-dy{background:#fff9e6}
+  .gx-days .dy-cell.today-dy .dnum{color:#b71c1c}
+
+  .gx-track{position:relative;min-height:88px;border-top:1px solid var(--gray-200);background:#fff;background-image:linear-gradient(to right,transparent calc(100%/var(--total-days) - 1px), var(--gray-100) calc(100%/var(--total-days) - 1px), var(--gray-100) calc(100%/var(--total-days)), transparent calc(100%/var(--total-days)));background-size:calc(100%/var(--total-days)) 100%}
+  .gx-track.mill-2{background-color:#f7fafd}
+  .gx-track.mill-1{background-color:#f6faf6}
+
+  .gx-bar{position:absolute;top:8px;bottom:8px;border-radius:6px;padding:6px 10px;color:#fff;font-weight:700;display:flex;flex-direction:column;justify-content:center;line-height:1.2;cursor:pointer;overflow:hidden;text-shadow:0 1px 2px rgba(0,0,0,.22);box-shadow:0 1px 3px rgba(0,0,0,.18);transition:filter .12s}
+  .gx-bar:hover{filter:brightness(1.08)}
+  .gx-bar.selected{outline:2px solid #000;outline-offset:1px;z-index:5}
+  .gx-bar .b-pid{font-size:13px;font-weight:800;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;letter-spacing:.2px}
+  .gx-bar .b-meta{font-size:11px;font-weight:600;opacity:.94;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  /* Status patterns (within a mill family) */
+  .gx-bar.s-completed{background:#66bb6a;border:1px solid #2e7d32}
+  .gx-bar.mill-2.s-completed{background:#64b5f6;border:1px solid #1976d2}
+  .gx-bar.s-scheduled{background:#2e7d32}
+  .gx-bar.mill-2.s-scheduled{background:#1976d2}
+  .gx-bar.s-inprogress{background:repeating-linear-gradient(45deg,#0d4e1f,#0d4e1f 6px,#1b5e20 6px,#1b5e20 12px)}
+  .gx-bar.mill-2.s-inprogress{background:repeating-linear-gradient(45deg,#0d47a1,#0d47a1 6px,#1565c0 6px,#1565c0 12px)}
+
+  .gx-today-line{position:absolute;top:0;bottom:0;width:2px;background:#d32f2f;z-index:4;pointer-events:none}
+  .gx-today-tag{position:absolute;top:-8px;transform:translateX(-50%);background:#d32f2f;color:#fff;font-size:9px;letter-spacing:1.5px;font-weight:800;padding:2px 6px;border-radius:3px;z-index:6;pointer-events:none}
+  .gx-today-tag.bottom{top:auto;bottom:-8px}
+
+  .gantt-footer-note{text-align:center;font-size:11px;letter-spacing:1.5px;color:var(--gray-500);font-weight:600;text-transform:uppercase;margin-top:10px;padding:10px;background:var(--gray-50);border-radius:6px}
 
   /* Detail Report — slicers + drill-down */
   .slicer-row{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-bottom:10px}
@@ -324,28 +378,35 @@
       <p style="font-size:12px">Expected columns: <b>prd_product_id, blg_grade_id, bdt_cut_length, bdt_disposition, bdt_bundle_date, bundle_tons, bdt_heat_no, crw_crew_id</b></p>
     </div>
     <div id="runsContent" style="display:none">
-      <div class="kpis" id="runsKpis"></div>
+      <div class="gantt-toolbar">
+        <div class="ctrl-grp">
+          <span class="ctrl-lbl">MILL</span>
+          <button class="chip mill-chip" data-gmill="both"><span class="mill-dot dot-1"></span><span class="mill-dot dot-2"></span> Both Mills</button>
+          <button class="chip mill-chip" data-gmill="1"><span class="mill-dot dot-1"></span> Mill 1 Only</button>
+          <button class="chip mill-chip" data-gmill="2"><span class="mill-dot dot-2"></span> Mill 2 Only</button>
+        </div>
+        <div class="ctrl-grp ctrl-grp-period">
+          <span class="ctrl-lbl">PERIOD</span>
+          <button class="step-btn" data-step="-1" aria-label="Previous">◀</button>
+          <div class="period-label" id="ganttPeriodLabel">—</div>
+          <button class="step-btn" data-step="1" aria-label="Next">▶</button>
+        </div>
+        <div class="ctrl-grp">
+          <span class="ctrl-lbl">VIEW</span>
+          <button class="chip view-chip" data-gview="week">Week</button>
+          <button class="chip view-chip" data-gview="period">Period</button>
+          <button class="chip view-chip" data-gview="quarter">Quarter</button>
+        </div>
+      </div>
+      <div class="kpis gantt-kpis" id="runsKpis"></div>
       <div class="card">
-        <div class="head">Rolling Schedule — Gantt by Mill<span class="right" id="ganttRange"></span></div>
+        <div class="head">Production Gantt<span class="right" id="ganttRange"></span></div>
         <div class="body">
-          <div class="gantt-controls">
-            <span class="label">Window:</span>
-            <button class="chip" data-gw="7">Last 7d</button>
-            <button class="chip" data-gw="30">Last 30d</button>
-            <button class="chip" data-gw="90">Last 90d</button>
-            <button class="chip active" data-gw="all">All</button>
-            <span class="label" style="margin-left:14px">Min span:</span>
-            <button class="chip active" data-gmin="0">All</button>
-            <button class="chip" data-gmin="1">≥1h</button>
-            <button class="chip" data-gmin="4">≥4h</button>
-            <span class="spacer" style="flex:1"></span>
-            <span class="summary" id="ganttSummary"></span>
-          </div>
           <div class="gantt-wrap" id="ganttWrap">
             <div id="ganttCalendar"></div>
             <div class="gantt-tooltip" id="ganttTip"></div>
           </div>
-          <div class="sub" style="font-size:12px;color:var(--gray-500);margin-top:8px">A rolling = consecutive bundles in the same mill sharing Product ID, Grade, Length, and Disposition. Each calendar cell shows every session that overlapped that day, stacked top-to-bottom. Click any bar to filter the rolling table below.</div>
+          <div class="sub gantt-footer-note" id="ganttFooterNote">FISCAL CALENDAR · 4-4-5 PATTERN · MILL 1 ROW = GREEN · MILL 2 ROW = BLUE</div>
         </div>
       </div>
       <div class="card">
@@ -456,7 +517,7 @@ const STATE = {
   // Mill bundle data lives in memory only (too big for localStorage); rollings persist.
   millBundles: { '1': [], '2': [] },
   rollings:    { '1': [], '2': [] },
-  filters: { product: 'ALL', bay: 'ALL', includeHold: true, shipRange: 'day', prodSub: 'runs', ganttWindow: 'all', ganttMin: 0, calMill: null, rollingMillFilter: null, rollingKeyFilter: null, detailCat: 'ALL', detailPid: null, detailYear: 'ALL', detailType: 'ALL', detailGroup: 'ALL', detailGrade: 'ALL' },
+  filters: { product: 'ALL', bay: 'ALL', includeHold: true, shipRange: 'day', prodSub: 'runs', ganttView: 'period', ganttAnchor: null, ganttMill: 'both', rollingMillFilter: null, rollingKeyFilter: null, detailCat: 'ALL', detailPid: null, detailYear: 'ALL', detailType: 'ALL', detailGroup: 'ALL', detailGrade: 'ALL' },
   asOf: null
 };
 
@@ -571,6 +632,52 @@ function fiscalWeekLabel(fw){
   const em = monthShort[e.getMonth()];
   if(sm === em) return `W${String(fw.wk).padStart(2,'0')} · ${sm} ${s.getDate()}–${e.getDate()}`;
   return `W${String(fw.wk).padStart(2,'0')} · ${sm} ${s.getDate()}–${em} ${e.getDate()}`;
+}
+
+/* 4-4-5 fiscal period pattern: P1-P3 = Q1, P4-P6 = Q2, P7-P9 = Q3,
+   P10-P12 = Q4. Each quarter is 13 weeks; the third period in every
+   quarter is 5 weeks long, the other two are 4 weeks. */
+const PERIOD_BOUNDARIES = [
+  [1,4],   [5,8],   [9,13],
+  [14,17], [18,21], [22,26],
+  [27,30], [31,34], [35,39],
+  [40,43], [44,47], [48,52]
+];
+function fiscalPeriod(date){
+  const fw = fiscalWeek(date);
+  if(fw.isX) return null;
+  for(let i=0; i<PERIOD_BOUNDARIES.length; i++){
+    const [s, e] = PERIOD_BOUNDARIES[i];
+    if(fw.wk >= s && fw.wk <= e){
+      return {period: i+1, quarter: Math.floor(i/3)+1, year: fw.year, weekInPeriod: fw.wk - s + 1};
+    }
+  }
+  return null;
+}
+function periodDateRange(year, period){
+  const idx = ((period-1) % 12 + 12) % 12;
+  const [sw, ew] = PERIOD_BOUNDARIES[idx];
+  const w1 = fiscalW1(year);
+  const start = new Date(w1.getTime() + (sw-1)*7*86400000);
+  const end = new Date(w1.getTime() + ew*7*86400000 - 1);
+  return {start, end, startWk: sw, endWk: ew, weeks: ew-sw+1, period, year};
+}
+function quarterDateRange(year, quarter){
+  const r1 = periodDateRange(year, (quarter-1)*3 + 1);
+  const r2 = periodDateRange(year, quarter*3);
+  return {start: r1.start, end: r2.end, quarter, year, weeks: 13};
+}
+function stepPeriod(year, period, delta){
+  let p = period + delta, y = year;
+  while(p < 1){ p += 12; y -= 1; }
+  while(p > 12){ p -= 12; y += 1; }
+  return {year: y, period: p};
+}
+function stepQuarter(year, quarter, delta){
+  let q = quarter + delta, y = year;
+  while(q < 1){ q += 4; y -= 1; }
+  while(q > 4){ q -= 4; y += 1; }
+  return {year: y, quarter: q};
 }
 
 /* Slice a sub-rolling so that no segment crosses a fiscal-week boundary.
@@ -1482,43 +1589,107 @@ function renderMillRuns(){
   document.getElementById('runsContent').style.display = empty ? 'none' : 'block';
   if(empty) return;
 
-  // Color map for Gantt: distinct color per Product ID, ordered by total tons.
-  const pidColors = buildProductIdColors(rolls);
+  // Determine the visible date range from the View toggle (week/period/
+  // quarter) anchored on STATE.filters.ganttAnchor (defaults to today, or
+  // to the latest rolling end if today predates the data).
+  const view = STATE.filters.ganttView || 'period';
+  let anchor = STATE.filters.ganttAnchor ? new Date(STATE.filters.ganttAnchor) : null;
+  if(!anchor || isNaN(anchor)) anchor = today();
+  // If today is well outside the data range, snap to the latest data day so
+  // the page opens to something meaningful on first load.
+  const dataMax = new Date(Math.max(...rolls.map(r=>r.end.getTime())));
+  if(anchor > dataMax) anchor = new Date(dataMax);
+  const range = ganttRangeFor(view, anchor);
+  STATE.filters.ganttAnchor = anchor.toISOString();
 
-  // Window filter: campaigns whose end date falls within the chosen lookback window.
-  const wnd = STATE.filters.ganttWindow || '30';
-  const minSpan = Number(STATE.filters.ganttMin || 0);
-  const maxEnd = Math.max(...rolls.map(r=>r.end.getTime()));
-  let cutoff = -Infinity;
-  if(wnd !== 'all'){
-    const days = Number(wnd);
-    cutoff = maxEnd - days*86400000;
+  // Build the "previous period" range for trend comparisons.
+  const prevRange = ganttRangeFor(view, new Date(range.start.getTime() - 86400000));
+
+  // Filter rollings by date range × mill chip.
+  const mFilter = STATE.filters.ganttMill || 'both';
+  const overlapsRange = (r, rng) => r.end >= rng.start && r.start <= rng.end;
+  const inRange = rolls.filter(r => overlapsRange(r, range));
+  const inPrev  = rolls.filter(r => overlapsRange(r, prevRange));
+  const visible = mFilter === 'both' ? inRange : inRange.filter(r => r.mill === mFilter);
+
+  // Hours-in-range and tons-in-range, allocated proportionally for sessions
+  // that straddle the boundary.
+  function clipMetrics(arr, rng){
+    let tons = 0, hours = 0;
+    for(const r of arr){
+      const s = Math.max(r.start.getTime(), rng.start.getTime());
+      const e = Math.min(r.end.getTime(), rng.end.getTime());
+      if(e <= s) continue;
+      const overlapH = (e - s) / 3600000;
+      const frac = r.hours > 0 ? Math.min(1, overlapH / r.hours) : 0;
+      hours += overlapH;
+      tons  += r.tons * frac;
+    }
+    return {tons, hours};
   }
-  let visible = rolls.filter(r => r.end.getTime() >= cutoff);
-  if(minSpan > 0) visible = visible.filter(r => r.hours >= minSpan);
+  const m1Now = clipMetrics(inRange.filter(r=>r.mill==='1'), range);
+  const m2Now = clipMetrics(inRange.filter(r=>r.mill==='2'), range);
+  const m1Prev = clipMetrics(inPrev.filter(r=>r.mill==='1'), prevRange);
+  const m2Prev = clipMetrics(inPrev.filter(r=>r.mill==='2'), prevRange);
+  const combinedHoursNow = m1Now.hours + m2Now.hours;
+  const combinedHoursPrev = m1Prev.hours + m2Prev.hours;
+  const rangeDays = (range.end - range.start) / 86400000 + 1;
+  const millsCounted = mFilter === 'both' ? 2 : 1;
+  const capacityHrs = millsCounted * rangeDays * 24;
+  const utilNow = capacityHrs ? (combinedHoursNow / capacityHrs) * 100 : 0;
+  const prevCapHrs = millsCounted * ((prevRange.end - prevRange.start)/86400000 + 1) * 24;
+  const utilPrev = prevCapHrs ? (combinedHoursPrev / prevCapHrs) * 100 : 0;
 
-  // KPIs over the visible window
-  const totalTons = visible.reduce((a,r)=>a+r.tons,0);
-  const totalHours = visible.reduce((a,r)=>a+r.hours,0);
-  const m1 = visible.filter(r=>r.mill==='1');
-  const m2 = visible.filter(r=>r.mill==='2');
-  const tonsPerHr = totalHours ? totalTons/totalHours : 0;
-  const dates = visible.map(r=>r.start.getTime()).concat(visible.map(r=>r.end.getTime()));
-  const minD = dates.length?new Date(Math.min(...dates)):null;
-  const maxD = dates.length?new Date(Math.max(...dates)):null;
-  const uniqProds = new Set(visible.map(r=>r.productId)).size;
+  const trend = (now, prev) => {
+    if(!prev || !isFinite(prev)) return {pct: null, dir: 'flat'};
+    const pct = ((now - prev) / prev) * 100;
+    return {pct, dir: pct > 0.5 ? 'up' : pct < -0.5 ? 'down' : 'flat'};
+  };
+  const t1 = trend(m1Now.tons, m1Prev.tons);
+  const t2 = trend(m2Now.tons, m2Prev.tons);
+  const tU = trend(utilNow, utilPrev);
+  const arrow = d => d === 'up' ? '▲' : d === 'down' ? '▼' : '◆';
+  const trendHtml = (lbl, t, suffix) =>
+    t.pct == null ? '<span class="trend flat">— no prior</span>'
+    : `<span class="trend ${t.dir}">${arrow(t.dir)} ${Math.abs(t.pct).toFixed(1)}${suffix||'%'}</span> ${lbl}`;
+
   document.getElementById('runsKpis').innerHTML = `
-    <div class="kpi green"><h3>Campaigns</h3><div class="val">${fmt0(visible.length)}</div><div class="sub">Mill 1: ${fmt0(m1.length)} · Mill 2: ${fmt0(m2.length)}</div></div>
-    <div class="kpi green"><h3>Total Tons</h3><div class="val">${fmt0(totalTons)}<small>tons</small></div><div class="sub">Mill 1: ${fmt0(m1.reduce((a,r)=>a+r.tons,0))} · Mill 2: ${fmt0(m2.reduce((a,r)=>a+r.tons,0))}</div></div>
-    <div class="kpi green"><h3>Rolling Hours</h3><div class="val">${fmt0(totalHours)}<small>hrs</small></div><div class="sub">first start → last end per session</div></div>
-    <div class="kpi blue"><h3>Tons / Hour</h3><div class="val">${fmt1(tonsPerHr)}</div><div class="sub">${fmt0(uniqProds)} unique product IDs</div></div>
-    <div class="kpi green"><h3>Date Range</h3><div class="val" style="font-size:18px">${minD?dstr(minD):'—'}</div><div class="sub">→ ${maxD?dstr(maxD):'—'}</div></div>
+    <div class="kpi mill-1">
+      <h3>Mill 1 · ${range.label.short} Tons</h3>
+      <div class="val">${fmt0(m1Now.tons)}<small>tons</small></div>
+      <div class="sub">${trendHtml('vs prior '+view, t1)}</div>
+    </div>
+    <div class="kpi mill-2">
+      <h3>Mill 2 · ${range.label.short} Tons</h3>
+      <div class="val">${fmt0(m2Now.tons)}<small>tons</small></div>
+      <div class="sub">${trendHtml('vs prior '+view, t2)}</div>
+    </div>
+    <div class="kpi combined">
+      <h3>Combined · Rolling Hours</h3>
+      <div class="val">${fmt0(combinedHoursNow)}<small>hrs</small></div>
+      <div class="sub">Across ${fmt0(visible.length)} production runs</div>
+    </div>
+    <div class="kpi combined">
+      <h3>Combined · Utilization</h3>
+      <div class="val">${utilNow.toFixed(1)}<small>%</small></div>
+      <div class="sub">${trendHtml('vs prior '+view, tU, 'pp')}</div>
+    </div>
   `;
 
-  document.getElementById('ganttRange').textContent = visible.length ? `${dstr(minD)} → ${dstr(maxD)} · ${fmt0(visible.length)} campaigns` : '';
-  document.getElementById('ganttSummary').innerHTML = `<b>${fmt0(visible.length)}</b> campaigns · <b>${fmt0(totalTons)}</b> tons · <b>${fmt0(totalHours)}</b> hrs`;
+  document.getElementById('ganttPeriodLabel').textContent = range.label.long;
+  document.getElementById('ganttRange').textContent = `${dstr(range.start)} → ${dstr(range.end)}`;
+  // Reflect chip states (sub-toggle, view, mill) from persisted state.
+  document.querySelectorAll('.gantt-toolbar .chip[data-gview]').forEach(c =>
+    c.classList.toggle('active', c.dataset.gview === view));
+  document.querySelectorAll('.gantt-toolbar .chip[data-gmill]').forEach(c =>
+    c.classList.toggle('active', c.dataset.gmill === mFilter));
 
-  renderGanttCalendar(visible, pidColors);
+  const footer = document.getElementById('ganttFooterNote');
+  if(footer){
+    footer.textContent = `FISCAL CALENDAR · 4-4-5 PATTERN · ${range.label.short.toUpperCase()} SPANS ${fmt0(rangeDays)} DAYS · MILL 1 ROW = GREEN · MILL 2 ROW = BLUE`;
+  }
+
+  renderProductionGantt(visible, range);
 
   // Rolling summary table — apply optional click-filter from Gantt
   let tableRows = visible;
@@ -2018,197 +2189,190 @@ function renderDetailReport(allRolls, pidColors){
 }
 
 
-/* Calendar mode: traditional month-grid layout (Sun→Sat columns).
-   Each day cell is colored by the dominant session that ran that day on the
-   selected mill, with the product ID and tons stamped on the cell. Multi-
-   day sessions naturally fill multiple cells with the same color/label
-   (since each of those days is dominated by that session). Empty days stay
-   white. Click a day to filter the rolling table to its session. */
-function renderGanttCalendar(rollings, pidColors){
+/* Compute the visible date range + label for the Gantt given a view
+   (week / period / quarter) and an anchor date. */
+function ganttRangeFor(view, anchor){
+  const monthShort = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  const fmtRange = (a,b) => {
+    const ma = monthShort[a.getMonth()], mb = monthShort[b.getMonth()];
+    if(a.getMonth() === b.getMonth()) return `${ma} ${a.getDate()}–${b.getDate()}`;
+    return `${ma} ${a.getDate()} – ${mb} ${b.getDate()}`;
+  };
+  if(view === 'week'){
+    const fw = fiscalWeek(anchor);
+    const start = new Date(fw.start.getFullYear(), fw.start.getMonth(), fw.start.getDate());
+    const end = new Date(fw.end.getFullYear(), fw.end.getMonth(), fw.end.getDate(), 23,59,59,999);
+    return {start, end, view, weeks: 1, label: {
+      short: 'Week',
+      long: `FY${String(fw.year).slice(-2)} ${fiscalWeekLabel(fw).split(' · ')[0]} · ${fmtRange(start,end)}`
+    }};
+  }
+  if(view === 'quarter'){
+    const fp = fiscalPeriod(anchor);
+    if(!fp){
+      const t = today();
+      return ganttRangeFor('quarter', t);
+    }
+    const qr = quarterDateRange(fp.year, fp.quarter);
+    const start = new Date(qr.start.getFullYear(), qr.start.getMonth(), qr.start.getDate());
+    const end = new Date(qr.end.getFullYear(), qr.end.getMonth(), qr.end.getDate(), 23,59,59,999);
+    return {start, end, view, year: fp.year, quarter: fp.quarter, weeks: 13, label: {
+      short: 'Quarter',
+      long: `FY${String(fp.year).slice(-2)} Q${fp.quarter} · ${fmtRange(start,end)}`
+    }};
+  }
+  // 'period' (default)
+  const fp = fiscalPeriod(anchor);
+  if(!fp){
+    const t = today();
+    return ganttRangeFor('period', t);
+  }
+  const pr = periodDateRange(fp.year, fp.period);
+  const start = new Date(pr.start.getFullYear(), pr.start.getMonth(), pr.start.getDate());
+  const end = new Date(pr.end.getFullYear(), pr.end.getMonth(), pr.end.getDate(), 23,59,59,999);
+  return {start, end, view, year: fp.year, period: fp.period, weeks: pr.weeks, label: {
+    short: 'Period',
+    long: `FY${String(fp.year).slice(-2)} P${fp.period} · ${fmtRange(start,end)}`
+  }};
+}
+
+/* Step the gantt anchor forward/backward by one week / period / quarter,
+   used by the ◀ ▶ chips in the toolbar. */
+function stepGanttAnchor(delta){
+  const view = STATE.filters.ganttView || 'period';
+  let anchor = STATE.filters.ganttAnchor ? new Date(STATE.filters.ganttAnchor) : today();
+  if(view === 'week'){
+    anchor = new Date(anchor.getTime() + delta * 7 * 86400000);
+  } else if(view === 'quarter'){
+    const fp = fiscalPeriod(anchor);
+    if(fp){
+      const n = stepQuarter(fp.year, fp.quarter, delta);
+      anchor = quarterDateRange(n.year, n.quarter).start;
+    }
+  } else {
+    const fp = fiscalPeriod(anchor);
+    if(fp){
+      const n = stepPeriod(fp.year, fp.period, delta);
+      anchor = periodDateRange(n.year, n.period).start;
+    }
+  }
+  STATE.filters.ganttAnchor = anchor.toISOString();
+}
+
+/* Horizontal Production Gantt: one row per mill, days as columns, bars
+   placed by start/end. */
+function renderProductionGantt(rollings, range){
   const cal = document.getElementById('ganttCalendar');
   const tip = document.getElementById('ganttTip');
-  if(!rollings.length){ cal.innerHTML = '<div style="padding:30px;color:var(--gray-500)">No rollings in window.</div>'; return; }
+  if(!cal) return;
 
-  // Choose mill to render (if both have data, allow toggle)
-  const millsWithData = Array.from(new Set(rollings.map(r => r.mill))).sort();
-  let curMill = STATE.filters.calMill;
-  if(!curMill || !millsWithData.includes(curMill)) curMill = millsWithData[0];
+  const rangeStartMs = range.start.getTime();
+  const rangeEndMs = range.end.getTime();
+  const totalMs = Math.max(1, rangeEndMs - rangeStartMs);
+  const totalDays = Math.round(totalMs / 86400000) + 1;
+  const nowMs = today().getTime();
+  const showTodayLine = nowMs >= rangeStartMs && nowMs <= rangeEndMs + 86400000;
+  const todayPct = ((nowMs - rangeStartMs) / totalMs) * 100;
 
-  // For the chosen mill, build dayMap: YYYY-MM-DD → [{run, hours-on-this-day}, ...]
-  const millRolls = rollings.filter(r => r.mill === curMill);
-  const dayMap = {};
-  for(const r of millRolls){
-    let cursor = new Date(r.start.getFullYear(), r.start.getMonth(), r.start.getDate());
-    const endMs = r.end.getTime();
-    while(cursor.getTime() <= endMs){
-      const dayStartMs = cursor.getTime();
-      const dayEndMs = dayStartMs + 86399999;
-      const overlapStart = Math.max(r.start.getTime(), dayStartMs);
-      const overlapEnd = Math.min(endMs, dayEndMs);
-      const hrs = (overlapEnd - overlapStart) / 3600000;
-      if(hrs > 0){
-        const k = dstr(cursor);
-        if(!dayMap[k]) dayMap[k] = [];
-        dayMap[k].push({
-          rolling: r,
-          hoursToday: hrs,
-          tonsToday: r.hours ? r.tons * (hrs/r.hours) : 0
-        });
-      }
-      cursor = new Date(cursor.getTime() + 86400000);
-    }
+  // Day cells: walk every day in the range, group by fiscal week for the
+  // header strip.
+  const dows = ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
+  const days = [];
+  for(let t = rangeStartMs; t <= rangeEndMs; t += 86400000){
+    const d = new Date(t);
+    const dow = (d.getDay() + 6) % 7; // Mon=0..Sun=6
+    days.push({date: d, dow, key: dstr(d), isToday: dstr(d) === dstr(today())});
   }
-  for(const k in dayMap) dayMap[k].sort((a,b) => b.hoursToday - a.hoursToday);
+  // Group consecutive Monday-start runs into "weeks" for the WEEK header
+  const weekGroups = [];
+  let cur = null;
+  for(const d of days){
+    if(d.dow === 0 || !cur){
+      cur = {label: 'WEEK '+(weekGroups.length+1), count: 0};
+      weekGroups.push(cur);
+    }
+    cur.count++;
+  }
 
-  // Determine month range
-  const allDates = [];
-  for(const r of millRolls){ allDates.push(r.start); allDates.push(r.end); }
-  const minD = new Date(Math.min(...allDates.map(d=>d.getTime())));
-  const maxD = new Date(Math.max(...allDates.map(d=>d.getTime())));
-  const firstMonth = new Date(minD.getFullYear(), minD.getMonth(), 1);
-  const lastMonth = new Date(maxD.getFullYear(), maxD.getMonth(), 1);
+  const mFilter = STATE.filters.ganttMill || 'both';
+  const millsToShow = mFilter === 'both' ? ['1','2'] : [mFilter];
+  if(!rollings.length){
+    cal.innerHTML = `<div style="padding:36px;color:var(--gray-500);text-align:center">No rollings in ${esc(range.label.long)}.</div>`;
+    return;
+  }
 
-  const monthShort = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-  const monthLong = ['January','February','March','April','May','June','July','August','September','October','November','December'];
-  const dows = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
-  const todayKey = dstr(today());
+  // Bar status by today's relation to start/end.
+  const statusOf = r => {
+    if(r.end.getTime() < nowMs) return 'completed';
+    if(r.start.getTime() > nowMs) return 'scheduled';
+    return 'inprogress';
+  };
+  // Helper: percent-from-range-start for a date (clamped to range).
+  const pctFor = ms => Math.max(0, Math.min(100, ((ms - rangeStartMs) / totalMs) * 100));
 
-  // Mill toggle (only if both have data)
+  // Build inner HTML
   let html = '';
-  if(millsWithData.length > 1){
-    html += '<div class="calmill-controls"><span class="label" style="color:var(--gray-500);font-size:11px;letter-spacing:1px;font-weight:700;text-transform:uppercase;margin-right:6px">Mill:</span>';
-    for(const m of millsWithData){
-      html += `<button class="chip ${m===curMill?'active':''}" data-cmill="${m}">Mill ${m}</button>`;
+  html += `<div class="gantt-chart">
+    <div class="gantt-chart-title">
+      <span>PRODUCTION GANTT — FISCAL ${range.label.short.toUpperCase()} ${range.period?'· P'+range.period:''} ${range.quarter?'· Q'+range.quarter:''} (${range.weeks} WEEK${range.weeks===1?'':'S'})</span>
+      <span class="legend">
+        <span class="lg-item"><span class="sw completed"></span>Completed</span>
+        <span class="lg-item"><span class="sw scheduled"></span>Scheduled</span>
+        <span class="lg-item"><span class="sw in-progress"></span>In Progress</span>
+        <span class="lg-item"><span class="sw today"></span>Today</span>
+      </span>
+    </div>
+    <div class="gantt-frame" style="--total-days:${totalDays}">
+      <div class="gx-side">MILL / DATE</div>
+      <div style="display:flex;flex-direction:column">
+        <div class="gx-weeks">
+          ${weekGroups.map(g => `<div class="wk-cell" style="flex:${g.count}">${g.label}</div>`).join('')}
+        </div>
+        <div class="gx-days">
+          ${days.map(d => `<div class="dy-cell${d.isToday?' today-dy':''}"><span class="dow">${dows[d.dow]}</span><span class="dnum">${d.date.getDate()}</span></div>`).join('')}
+        </div>
+      </div>`;
+
+  for(const mill of millsToShow){
+    const millRolls = rollings.filter(r => r.mill === mill);
+    html += `<div class="gx-side row-mill mill-${mill}"><span><span class="stripe"></span>Mill ${mill}</span><span class="submeta">Bar Mill · Hot</span></div>`;
+    html += `<div class="gx-track mill-${mill}" data-mill="${mill}">`;
+    if(showTodayLine){
+      html += `<div class="gx-today-tag" style="left:${todayPct}%">TODAY</div>
+               <div class="gx-today-line" style="left:${todayPct}%"></div>`;
     }
-    html += '</div>';
+    for(const r of millRolls){
+      const sMs = Math.max(r.start.getTime(), rangeStartMs);
+      const eMs = Math.min(r.end.getTime(), rangeEndMs);
+      if(eMs <= sMs) continue;
+      const leftPct = pctFor(sMs);
+      const widthPct = Math.max(0.6, pctFor(eMs) - leftPct);
+      const st = statusOf(r);
+      const sel = STATE.filters.rollingKeyFilter === r.key ? ' selected' : '';
+      html += `<div class="gx-bar mill-${mill} s-${st}${sel}"
+                  style="left:${leftPct}%;width:${widthPct}%"
+                  data-key="${esc(r.key)}" data-mill="${mill}"
+                  data-pid="${esc(r.productId)}" data-grade="${esc(r.grade)}" data-disp="${esc(r.disposition)}"
+                  data-rstart="${r.start.toISOString()}" data-rend="${r.end.toISOString()}"
+                  data-rtons="${r.tons.toFixed(1)}" data-rhours="${r.hours.toFixed(1)}" data-rbundles="${r.bundles}"
+                  data-gap="${r.gapDays==null?'':r.gapDays.toFixed(2)}">
+        <span class="b-pid">${esc(r.productId)}</span>
+        <span class="b-meta">${fmt0(r.tons)} t · ${fmt0(r.hours)}h</span>
+      </div>`;
+    }
+    html += `</div>`;
   }
-
-  // Pre-compute the week rows we actually want to render. A week is shown
-  // only if at least one of its days has rolling data — this is what
-  // collapses the calendar when the user picks 7d/30d windows where most
-  // weeks are blank. The cell height scales inversely to the resulting
-  // total so a single-week view stays large and readable, while a 90d
-  // span stays compact.
-  const monthsToRender = [];
-  let m = new Date(firstMonth);
-  while(m <= lastMonth){
-    const year = m.getFullYear();
-    const mon = m.getMonth();
-    const firstOfMonth = new Date(year, mon, 1);
-    const daysInMonth = new Date(year, mon+1, 0).getDate();
-    const startDow = firstOfMonth.getDay();
-    const totalCells = Math.ceil((startDow + daysInMonth)/7) * 7;
-    const weeks = [];
-    for(let i=0; i<totalCells; i++){
-      if(i % 7 === 0) weeks.push([]);
-      const dnum = i - startDow + 1;
-      const isOutside = (dnum < 1 || dnum > daysInMonth);
-      let date = null, dayKey = null, hasData = false;
-      if(!isOutside){
-        date = new Date(year, mon, dnum);
-        dayKey = dstr(date);
-        hasData = !!dayMap[dayKey];
-      }
-      weeks[weeks.length-1].push({dnum, date, dayKey, isOutside, hasData});
-    }
-    const visibleWeeks = weeks.filter(w => w.some(c => c.hasData));
-    if(visibleWeeks.length){
-      monthsToRender.push({year, mon, daysInMonth, weeks: visibleWeeks});
-    }
-    m = new Date(year, mon+1, 1);
-  }
-
-  const totalVisibleWeeks = monthsToRender.reduce((a, mi) => a + mi.weeks.length, 0);
-  const cellH = Math.max(90, Math.min(200, Math.floor(720 / Math.max(1, totalVisibleWeeks))));
-
-  for(const mi of monthsToRender){
-    const {year, mon, daysInMonth, weeks: visibleWeeks} = mi;
-
-    // Month-level totals
-    let mTons = 0, mHours = 0, mDays = 0;
-    for(let dnum=1; dnum<=daysInMonth; dnum++){
-      const k = dstr(new Date(year, mon, dnum));
-      if(dayMap[k]){
-        mDays++;
-        for(const e of dayMap[k]){ mTons += e.tonsToday; mHours += e.hoursToday; }
-      }
-    }
-
-    html += `<div class="cal-month">
-      <div class="cal-title"><span>${monthLong[mon]} ${year} — Mill ${curMill}</span>
-        <span class="meta">${fmt0(mDays)} active days · ${fmt0(mHours)} rolling hrs · ${fmt0(mTons)} tons</span></div>
-      <div class="cal-grid" style="--cell-h:${cellH}px">`;
-    for(const d of dows) html += `<div class="cal-head">${d}</div>`;
-
-    // Track which campaigns we've already labeled in the current week row,
-    // so the tons/hours line shows only on the first cell of each row segment.
-    for(const week of visibleWeeks){
-      const seenInRow = new Set();
-      for(const cell of week){
-        if(cell.isOutside){
-          html += '<div class="cal-cell outside"></div>';
-          continue;
-        }
-        const date = cell.date;
-        const k = cell.dayKey;
-        const dnum = cell.dnum;
-        const fw = fiscalWeek(date);
-        const wkLbl = fiscalWeekLabel(fw);
-        const cellTodayCls = (k === todayKey) ? ' today' : '';
-        const entries = dayMap[k];
-        if(!entries || !entries.length){
-          html += `<div class="cal-cell${cellTodayCls}"><span class="wk">${wkLbl}</span><span class="date">${dnum}</span></div>`;
-          continue;
-        }
-        // Sort sessions within the day by start time so the stack reads
-        // chronologically top→bottom.
-        const ordered = entries.slice().sort((a,b) => a.rolling.start - b.rolling.start);
-        const bars = ordered.map(e => {
-          const r = e.rolling;
-          const fill = (pidColors && pidColors[r.productId]) || PRODUCT_COLORS[r.product] || '#7f8c8d';
-          const isFirstSegment = !seenInRow.has(r.key);
-          seenInRow.add(r.key);
-          const flex = Math.max(0.5, e.hoursToday);
-          const selCls = STATE.filters.rollingKeyFilter === r.key ? ' selected' : '';
-          const showMeta = isFirstSegment && e.hoursToday >= 2;
-          return `<div class="cal-bar${selCls}" style="background:${fill};flex:${flex.toFixed(2)} 1 0"
-                    data-key="${esc(r.key)}" data-mill="${curMill}"
-                    data-pid="${esc(r.productId)}" data-grade="${esc(r.grade)}" data-disp="${esc(r.disposition)}"
-                    data-rstart="${r.start.toISOString()}" data-rend="${r.end.toISOString()}"
-                    data-rtons="${r.tons.toFixed(1)}" data-rhours="${r.hours.toFixed(1)}" data-rbundles="${r.bundles}"
-                    data-htoday="${e.hoursToday.toFixed(1)}"
-                    data-gap="${r.gapDays==null?'':r.gapDays.toFixed(2)}">
-            <span class="pid">${esc(r.productId)}</span>
-            ${showMeta ? `<span class="meta">${fmt0(r.tons)}t · ${fmt0(r.hours)}h</span>` : ''}
-          </div>`;
-        }).join('');
-        html += `<div class="cal-cell has-data${cellTodayCls}">
-          <span class="wk">${wkLbl}</span>
-          <span class="date">${dnum}</span>
-          <div class="cal-stack">${bars}</div>
-        </div>`;
-      }
-    }
-    html += '</div></div>';
-  }
+  html += `</div></div>`;
 
   cal.innerHTML = html;
 
-  // Wire mill chips
-  cal.querySelectorAll('.chip[data-cmill]').forEach(c => c.addEventListener('click', () => {
-    STATE.filters.calMill = c.dataset.cmill;
-    saveState(); renderMillRuns();
-  }));
-
-  // Cell hover/click
-  cal.querySelectorAll('.cal-bar').forEach(bar => {
+  cal.querySelectorAll('.gx-bar').forEach(bar => {
     bar.addEventListener('mouseenter', e => {
       const d = e.currentTarget.dataset;
       const gap = d.gap === '' ? null : Number(d.gap);
-      tip.innerHTML = `<b>${esc(d.pid)}</b> · Mill ${esc(d.mill||curMill)}<br>
+      tip.innerHTML = `<b>${esc(d.pid)}</b> · Mill ${esc(d.mill)}<br>
         Grade: ${esc(d.grade)} · Disp: ${esc(d.disp)}<br>
-        Hours on this day: <b>${fmt1(Number(d.htoday||0))} hrs</b><br>
-        Full session: ${d.rstart.slice(0,16).replace('T',' ')} → ${d.rend.slice(0,16).replace('T',' ')}<br>
+        ${d.rstart.slice(0,16).replace('T',' ')} → ${d.rend.slice(0,16).replace('T',' ')}<br>
         <b>${fmt1(Number(d.rtons))} tons</b> · ${fmt1(Number(d.rhours))} hrs · ${fmt0(Number(d.rbundles))} bundles<br>
         <span style="color:#bdc3c7;font-size:11px">Gap since previous run of this product:</span> <b>${fmtGapDays(gap)}</b>`;
       tip.style.display = 'block';
@@ -2219,11 +2383,10 @@ function renderGanttCalendar(rollings, pidColors){
       tip.style.top = (e.clientY - r.top + 12) + 'px';
     });
     bar.addEventListener('mouseleave', () => { tip.style.display='none'; });
-    bar.addEventListener('click', e => {
-      e.stopPropagation();
+    bar.addEventListener('click', () => {
       const k = bar.dataset.key;
       STATE.filters.rollingKeyFilter = STATE.filters.rollingKeyFilter === k ? null : k;
-      renderMillRuns();
+      saveState(); renderMillRuns();
     });
   });
 }
@@ -2582,12 +2745,6 @@ function syncProdSubTab(){
   document.querySelectorAll('#prodSubtabs .subtab').forEach(t => t.classList.toggle('active', t.dataset.sub===sub));
   document.getElementById('prodSub-runs').style.display = sub==='runs' ? 'block' : 'none';
   document.getElementById('prodSub-fc').style.display   = sub==='fc'   ? 'block' : 'none';
-  // Reflect persisted Window / Min-span selections on the chip strip so the
-  // active highlight matches whatever was in localStorage on load.
-  const gw = String(STATE.filters.ganttWindow || 'all');
-  document.querySelectorAll('.gantt-controls .chip[data-gw]').forEach(x => x.classList.toggle('active', x.dataset.gw === gw));
-  const gm = String(STATE.filters.ganttMin || 0);
-  document.querySelectorAll('.gantt-controls .chip[data-gmin]').forEach(x => x.classList.toggle('active', x.dataset.gmin === gm));
 }
 
 function esc(s){ return String(s==null?'':s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
@@ -2696,15 +2853,17 @@ document.querySelectorAll('#prodSubtabs .subtab').forEach(t => t.addEventListene
   saveState(); syncProdSubTab();
 }));
 
-/* Gantt window + min-span chips */
-document.querySelectorAll('.gantt-controls .chip[data-gw]').forEach(c => c.addEventListener('click', () => {
-  STATE.filters.ganttWindow = c.dataset.gw;
-  document.querySelectorAll('.gantt-controls .chip[data-gw]').forEach(x => x.classList.toggle('active', x===c));
+/* Gantt toolbar — Mill / Period / View */
+document.querySelectorAll('.gantt-toolbar .chip[data-gmill]').forEach(c => c.addEventListener('click', () => {
+  STATE.filters.ganttMill = c.dataset.gmill;
   saveState(); renderMillRuns();
 }));
-document.querySelectorAll('.gantt-controls .chip[data-gmin]').forEach(c => c.addEventListener('click', () => {
-  STATE.filters.ganttMin = Number(c.dataset.gmin);
-  document.querySelectorAll('.gantt-controls .chip[data-gmin]').forEach(x => x.classList.toggle('active', x===c));
+document.querySelectorAll('.gantt-toolbar .chip[data-gview]').forEach(c => c.addEventListener('click', () => {
+  STATE.filters.ganttView = c.dataset.gview;
+  saveState(); renderMillRuns();
+}));
+document.querySelectorAll('.gantt-toolbar .step-btn[data-step]').forEach(c => c.addEventListener('click', () => {
+  stepGanttAnchor(Number(c.dataset.step));
   saveState(); renderMillRuns();
 }));
 
