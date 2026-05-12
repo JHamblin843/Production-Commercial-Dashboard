@@ -972,6 +972,11 @@
     var s13 = useState('ALL'); var hotWindow = s13[0], setHotWindow = s13[1];
     // Shipping overview chart grain: 'day' (default) / 'fweek' / 'fmonth'
     var s14 = useState('day'); var chartGrain = s14[0], setChartGrain = s14[1];
+    // Shipping overview year filter: null = follow current year (latest fiscal year with data),
+    // 'ALL' = all years, or a specific fiscal year number (e.g. 2026).
+    // null is the sentinel for "auto-track current year" so a new fiscal year doesn't strand
+    // the user on an old selection — Apr 2026 should show FY2026 today, FY2027 next year.
+    var s18 = useState(null); var chartYear = s18[0], setChartYear = s18[1];
     // Load Time page — separate chart grain so it doesn't fight with Shipping
     var s17 = useState('day'); var loadGrain = s17[0], setLoadGrain = s17[1];
     // When false (default): slicer shows 4 root codes (REBAR/HR-MBQ/HR-EB/BI)
@@ -1549,7 +1554,12 @@
         else if (s.mode === 'Rail') byDate[s.date].rail += s.tons;
         if (byDate[s.date][s.product] !== undefined) byDate[s.date][s.product] += s.tons;
       });
-      return Object.values(byDate).map(function(x) { return { date: x.date, total: Math.round(x.total), truck: Math.round(x.truck), rail: Math.round(x.rail), BI: Math.round(x.BI), REBAR: Math.round(x.REBAR), 'HR-MBQ': Math.round(x['HR-MBQ']), 'HR-EB': Math.round(x['HR-EB']) }; }).sort(function(a, b) { return a.date < b.date ? -1 : 1; });
+      return Object.values(byDate).map(function(x) {
+        // Tag each daily point with its fiscal year so the year slicer can filter at day grain.
+        // Falls back to calendar year if getFiscalInfo can't resolve the date.
+        var fi = getFiscalInfo(x.date);
+        return { date: x.date, fiscalYear: fi ? fi.year : Number(x.date.slice(0, 4)), total: Math.round(x.total), truck: Math.round(x.truck), rail: Math.round(x.rail), BI: Math.round(x.BI), REBAR: Math.round(x.REBAR), 'HR-MBQ': Math.round(x['HR-MBQ']), 'HR-EB': Math.round(x['HR-EB']) };
+      }).sort(function(a, b) { return a.date < b.date ? -1 : 1; });
     }, [filteredShipments]);
 
     // Fiscal-week aggregation — uses Nucor 4-4-5 calendar starting Sun Jan 4 2026 for FY2026
@@ -1625,8 +1635,27 @@
       };
     }, [shipments]);
 
-    // Pick which series to chart based on the grain slicer
-    var chartData = chartGrain === 'fweek' ? weeklyTrend : chartGrain === 'fmonth' ? monthlyTrend : dailyTrend;
+    // Years available in the shipment data — built from monthlyTrend so it's stable across
+    // all three grains (every shipment that lands in a fiscal week / day also lands in a month).
+    var availableChartYears = useMemo(function() {
+      var seen = {};
+      monthlyTrend.forEach(function(m) { if (m.fiscalYear != null) seen[m.fiscalYear] = true; });
+      return Object.keys(seen).map(Number).sort(function(a, b) { return a - b; });
+    }, [monthlyTrend]);
+
+    // Resolve the effective chart year:
+    //   chartYear === null   → latest fiscal year with data (auto-tracks "current year")
+    //   chartYear === 'ALL'  → no year filter
+    //   else                 → the specific year the user picked
+    var effectiveChartYear = chartYear == null
+      ? (availableChartYears.length ? availableChartYears[availableChartYears.length - 1] : null)
+      : chartYear;
+
+    // Pick which series to chart based on the grain slicer, then filter to the selected year.
+    var chartDataAllYears = chartGrain === 'fweek' ? weeklyTrend : chartGrain === 'fmonth' ? monthlyTrend : dailyTrend;
+    var chartData = (effectiveChartYear == null || effectiveChartYear === 'ALL')
+      ? chartDataAllYears
+      : chartDataAllYears.filter(function(d) { return d.fiscalYear === effectiveChartYear; });
     var chartXKey = chartGrain === 'day' ? 'date' : 'label';
 
     var WINDOW_OPTIONS = [
@@ -3084,14 +3113,38 @@
               h('span', null,
                 (chartGrain === 'fweek' ? 'Shipments by Fiscal Week' : chartGrain === 'fmonth' ? 'Shipments by Fiscal Month' : 'Daily Shipments') +
                 ' — Truck vs Rail' +
+                (effectiveChartYear != null && effectiveChartYear !== 'ALL' ? ' · FY' + effectiveChartYear : '') +
                 (productFilter.length > 0 ? ' · ' + productFilter.join(' + ') : '')
               ),
-              // Grain slicer — Day / Fiscal Week / Fiscal Month
-              h('div', { style: { display: 'flex', gap: 4 } },
-                [{ k: 'day', label: 'Day' }, { k: 'fweek', label: 'Fiscal Week' }, { k: 'fmonth', label: 'Fiscal Month' }].map(function(o) {
-                  var active = chartGrain === o.k;
-                  return h('button', { key: o.k, onClick: function() { setChartGrain(o.k); }, style: { padding: '4px 12px', fontSize: 12, fontWeight: 600, background: active ? '#fff' : 'transparent', color: active ? NUCOR_GREEN : '#fff', border: '1px solid rgba(255,255,255,0.5)', borderRadius: 3, cursor: 'pointer' } }, o.label);
-                })
+              h('div', { style: { display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' } },
+                // Year slicer — All / each fiscal year in data. Default tracks the latest FY.
+                availableChartYears.length > 0 && h('div', { style: { display: 'flex', gap: 4, alignItems: 'center' } },
+                  h('span', { style: { fontSize: 11, color: 'rgba(255,255,255,0.85)', fontWeight: 600, letterSpacing: 0.4, textTransform: 'uppercase', marginRight: 4 } }, 'Year'),
+                  // "All" — explicit override for cross-year comparison
+                  h('button', {
+                    onClick: function() { setChartYear('ALL'); },
+                    title: 'Show all fiscal years',
+                    style: { padding: '4px 10px', fontSize: 12, fontWeight: 600, background: chartYear === 'ALL' ? '#fff' : 'transparent', color: chartYear === 'ALL' ? NUCOR_GREEN : '#fff', border: '1px solid rgba(255,255,255,0.5)', borderRadius: 3, cursor: 'pointer' }
+                  }, 'All'),
+                  availableChartYears.map(function(y) {
+                    // chartYear === null means "auto-track latest" → the latest year shows as active.
+                    var isCurrentYear = y === availableChartYears[availableChartYears.length - 1];
+                    var active = chartYear === y || (chartYear == null && isCurrentYear);
+                    return h('button', {
+                      key: y,
+                      onClick: function() { setChartYear(y); },
+                      title: isCurrentYear ? 'Fiscal year ' + y + ' (current)' : 'Fiscal year ' + y,
+                      style: { padding: '4px 10px', fontSize: 12, fontWeight: 600, background: active ? '#fff' : 'transparent', color: active ? NUCOR_GREEN : '#fff', border: '1px solid rgba(255,255,255,0.5)', borderRadius: 3, cursor: 'pointer' }
+                    }, String(y));
+                  })
+                ),
+                // Grain slicer — Day / Fiscal Week / Fiscal Month
+                h('div', { style: { display: 'flex', gap: 4 } },
+                  [{ k: 'day', label: 'Day' }, { k: 'fweek', label: 'Fiscal Week' }, { k: 'fmonth', label: 'Fiscal Month' }].map(function(o) {
+                    var active = chartGrain === o.k;
+                    return h('button', { key: o.k, onClick: function() { setChartGrain(o.k); }, style: { padding: '4px 12px', fontSize: 12, fontWeight: 600, background: active ? '#fff' : 'transparent', color: active ? NUCOR_GREEN : '#fff', border: '1px solid rgba(255,255,255,0.5)', borderRadius: 3, cursor: 'pointer' } }, o.label);
+                  })
+                )
               )
             ),
             chartGrain !== 'day' && h('div', { style: { padding: '8px 20px 0', fontSize: 12, color: 'var(--nucor-text-muted)' } },
